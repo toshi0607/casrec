@@ -98,14 +98,19 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
     func observeState() -> AsyncStream<RecordingState> {
         let id = UUID()
         let (stream, continuation) = AsyncStream<RecordingState>.makeStream(bufferingPolicy: .bufferingNewest(1))
-        let current = state.withLock { current -> RecordingState in
-            current.observers[id] = continuation
-            return current.lastState
-        }
         continuation.onTermination = { [weak self] _ in
             self?.state.withLock { _ = $0.observers.removeValue(forKey: id) }
         }
-        continuation.yield(current)
+        state.withLock { current in
+            current.observers[id] = continuation
+            // Yielded under the same lock that registers the continuation, not after it.
+            // An `emit` that gets the lock first cannot see this continuation at all, and
+            // one that gets it second cannot run until this yield is done — so the newer
+            // state always arrives second. Outside the lock, an `emit` landing in between
+            // would deliver the new state first and `.bufferingNewest(1)` would keep the
+            // stale one, pinning the subscriber to a state the session has already left.
+            continuation.yield(current.lastState)
+        }
         return stream
     }
 

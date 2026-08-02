@@ -195,6 +195,11 @@ final class CaptureService: CaptureServicing, @unchecked Sendable {
         // Bi-planar 4:2:0 is what the HEVC/H.264 encoders want: half the bytes per pixel of
         // BGRA and no colour conversion on every frame of a multi-hour recording (R5).
         configuration.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        // Mandatory once the format is YCbCr: the matrix is what the RGB→YCbCr conversion
+        // is done with, and a 601/709 mismatch tints the whole recording in a way no
+        // post-processing can undo. Stated explicitly rather than left to a default,
+        // because this file is written once and played back forever.
+        configuration.colorMatrix = CGDisplayStream.yCbCrMatrix_ITU_R_709_2
         configuration.capturesAudio = settings.captureAppAudio
         configuration.excludesCurrentProcessAudio = true
         configuration.captureMicrophone = settings.captureMicrophone

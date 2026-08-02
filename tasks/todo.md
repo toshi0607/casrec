@@ -34,14 +34,14 @@ DESIGN.md §11 が主台帳。実装開始時点の追加分:
 
 ## Waves
 
-### Wave 0 — 骨格(直列。CLT 26.6完了が前提)
-- [ ] Package.swift(swift-tools 6.x、platforms: macOS 15、executable CasRec)
-- [ ] Sources/CasRec/{App,Core,Capture,Recording,PostProcess,Library,UI}/
-- [ ] Core/Contracts.swift — 共有型・プロトコル(RecordingState、CaptureTargetKind、SampleSink等)。**Wave 1エージェントは変更禁止**
-- [ ] App/CasRecApp.swift(空ウィンドウ表示まで)
-- [ ] Makefile — build / bundle(.app生成: Info.plist(NSMicrophoneUsageDescription含む)+ ad-hoc codesign)/ run
-- [ ] .gitignore(.build/, *.app 等)
-- 検証: `swift build` exit 0、`make bundle` で CasRec.app 生成、起動でウィンドウ表示
+### Wave 0 — 骨格(直列。CLT 26.6完了が前提)— **完了 (c19af18)**
+- [x] Package.swift(swift-tools 6.0、platforms: macOS 15、executable CasRec、Swift 6モードで警告ゼロ)
+- [x] Sources/CasRec/{App,Core,Capture,Recording,PostProcess,Library,UI}/
+- [x] Core/Contracts.swift — 共有型・プロトコル+CaptureEndReason(委譲先の合理的追加)。**Wave 1エージェントは変更禁止**
+- [x] App/CasRecApp.swift(空ウィンドウ表示まで)
+- [x] Makefile — build / bundle / run / clean
+- [x] .gitignore
+- 検証済(オーケストレーター再実行): `swift build` exit 0、`make bundle` で CasRec.app 生成+codesign成功、起動3秒確認 LAUNCH OK
 
 ### Wave 1 — 並行実装(worktree分離。担当領域外への書き込み禁止、Contracts変更は報告のみ)
 - [ ] 1a capture(sonnet): `Sources/CasRec/Capture/` — ShareableContentProvider(列挙+サムネイル+2秒更新)、CaptureService(SCStream開始/停止/エラー中継)
@@ -68,3 +68,5 @@ DESIGN.md §11 が主台帳。実装開始時点の追加分:
 - 2026-08-02: CLT 26.6 を softwareupdate でインストール開始(bg task bbsx9jpe5)。
 - 2026-08-02: probe.swift により設計前提APIの実在をSDK 13.3時点で部分VERIFIED(captureMicrophoneのみ15+ SDK待ち)。
 - 2026-08-02: CLT 26.6インストール完了(SDK 26.5 / Swift 6.3.3)。probe全API通過、MiniProbe.appでGUI起動確認。Wave 0委譲開始(sonnet、メインcheckoutで単独writer)。
+- 2026-08-02: Wave 0完了・検証済(sonnet)。Contracts.swiftにCaptureEndReasonが追加された(didStopWithErrorの中継チャネル。R10対応に必要と判断、妥当)。CaptureSourceは非Sendable(SCK型内包)— Wave 1a/1cは@MainActor寄せで対処する方針をプロンプトに明記済み。
+- 2026-08-02: Wave 1並行起動(worktree分離、background): 1a Capture=sonnet / 1b Recording=opus / 1c UI=haiku。コミットはオーケストレーターが回収時に実施。

@@ -18,7 +18,7 @@
 | 項目 | 状態 |
 |------|------|
 | Xcode | **無し**。SwiftPM + CLTで開発(DESIGN.md §8/§10をSwiftPM方式に更新済み) |
-| CLT | 13.3(Swift 5.8)→ **26.6へ更新中**(旧SDKがブロッカーだった) |
+| CLT | **26.6インストール済み**(SDK 26.5 / Swift 6.3.3)。旧13.3がブロッカーだった |
 | 署名 | 有効な証明書0件。ad-hocで開始し、TCC再許可の摩擦が確認されたら自己署名証明書を導入 |
 | ffmpeg | 未確認(Phase 3までに確認) |
 
@@ -28,9 +28,9 @@ DESIGN.md §11 が主台帳。実装開始時点の追加分:
 
 | Assumption | Status | Evidence |
 |------------|--------|----------|
-| 主要API(desktopIndependentWindow / movieFragmentInterval / capturesAudio / queueDepth / beginActivity)は実在 | VERIFIED | scratchpad probe.swift が SDK 13.3 でも typecheck 通過(2026-08-02) |
-| captureMicrophone / SCStreamOutputType.microphone は 15+ SDK が必要 | VERIFIED | 同probe: SDK 13.3 で該当2件のみエラー。CLT 26.6 導入後に再検証 |
-| SwiftPM executable + 手動.appバンドルで SwiftUI GUIアプリが動く(TCCも機能する) | UNVERIFIED | Wave 0 の make bundle + 起動確認で検証 |
+| 設計前提API全件(desktopIndependentWindow / movieFragmentInterval / capturesAudio / captureMicrophone / SCStreamOutputType.microphone / queueDepth / beginActivity)は実在 | VERIFIED | scratchpad probe.swift、SDK 26.5 で typecheck 全通過(2026-08-02) |
+| CLTビルドの実行ファイル+手動.appバンドル(ad-hoc署名)で SwiftUI GUIアプリが起動する | VERIFIED | scratchpad MiniProbe.app: 起動→SwiftUIライフサイクル実行→自己終了 exit 0(2026-08-02)。swiftc直は -parse-as-library 必要、SwiftPMでは不要 |
+| ad-hoc署名の.appでも画面収録TCCが正常に許可・維持される | UNVERIFIED-ACCEPTED (2026-08-02) | TCCダイアログ承認はユーザー操作のため自動検証不能。実機検証タスクの初手で確認する。緩和策: 摩擦(再ビルド毎の再許可)が出たら自己署名証明書に切替(DESIGN.md §8)。どの署名方式でもTCC自体は必要なためアーキテクチャへの影響なし |
 
 ## Waves
 
@@ -67,3 +67,4 @@ DESIGN.md §11 が主台帳。実装開始時点の追加分:
 - 2026-08-02: Xcode不在が判明(CLTのみ、しかも13.3/Swift 5.8)。DESIGN.mdの「Xcodeプロジェクト」前提を「SwiftPM + Makefileバンドル」に変更(§8/§10)。Xcode導入時はPackage.swiftを直接開けるため移行容易。
 - 2026-08-02: CLT 26.6 を softwareupdate でインストール開始(bg task bbsx9jpe5)。
 - 2026-08-02: probe.swift により設計前提APIの実在をSDK 13.3時点で部分VERIFIED(captureMicrophoneのみ15+ SDK待ち)。
+- 2026-08-02: CLT 26.6インストール完了(SDK 26.5 / Swift 6.3.3)。probe全API通過、MiniProbe.appでGUI起動確認。Wave 0委譲開始(sonnet、メインcheckoutで単独writer)。

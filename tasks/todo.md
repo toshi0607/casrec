@@ -59,7 +59,9 @@ DESIGN.md §11 が主台帳。実装開始時点の追加分:
 - [x] `swift build` exit 0(警告ゼロ)+ `make bundle` + 起動3秒確認(オーケストレーター再検証済み、2026-08-02)
 - [ ] スリープ抑止の動作確認(pmset -g assertions)— 録画開始が必要なため実機検証に併合
 
-Wave 2残課題(reviewerへの申し送り、既知): (1) failed時にアラートとインラインバナーが二重表示(UI設計判断待ち) (2) Mocks.swiftが参照ゼロのデッドコード(#if DEBUG化候補) (3) ⌘Q確認は録画開始直後の1ホップ分すり抜け窓あり(実害極小と判断) (4) 実行時挙動(⌘Qダイアログ・diskWarningバナー・スリープ抑止)は未検証 → 実機検証へ
+Wave 2残課題(reviewerへの申し送り、既知): (1) failed時にアラートとインラインバナーが二重表示(UI設計判断待ち) (2) Mocks.swiftが参照ゼロのデッドコード(#if DEBUG化候補) (3) ⌘Q確認は録画開始直後の1ホップ分すり抜け窓あり(実害極小と判断)。**N4: L7の変更によりlast-window-close判定も同じ遅延ミラーに依存するようになった(二段構えで実害極小)** (4) 実行時挙動(⌘Qダイアログ・diskWarningバナー・スリープ抑止)は未検証 → 実機検証へ
+
+Phase 2持ち越し追加(reviewer 2巡目 Low): N5 音声append継続失敗が完全に不可視(§5.6ログ基盤か専用カウンタで可視化) / N6 idleフレーム区間ではterminal失敗を検知できない(currentWriteFailureがwriter.statusも見るように) / N7 stopCaptureタイムアウトのdeadlineタスクにisCancelledガード(現状無害だが構造変更で顕在化) / N8 CaptureService.endedContinuationの終端後クリア / failureMessageの「残っています」不整合はdiscardIfEmpty()のBool返し化で1分岐修正可(reviewerの見積もり)
 
 Phase 2への持ち越し(opus実測による発見): audio input が有効なのにサンプル0件だと fragmented .mov の復旧可能プレフィックスが消える(`ftyp wide mdat(0)`)。マイク拒否シナリオに加え、**既定設定(captureAppAudio=true)+対象アプリが完全無音のケースでも成立する**(reviewer L10)。kill -9 試験のマトリクスに「audio starvation(mic拒否/無音アプリの両方)」を追加すること。飢餓inputの `markAsFinished()` はR3/R8とR6のトレードオフでプロダクト判断が要るため未実装。
 
@@ -67,12 +69,17 @@ Phase 2への持ち越し(opus実測による発見): audio input が有効な�
 - [x] reviewer(opus、フレッシュコンテキスト)による静的レビュー実施(2026-08-02)。※このセッションに/code-reviewコマンドが無いため、バグ検出と設計準拠をreviewer 1本でカバー(逸脱記録)
 - 結果: **Request Changes** — Critical 0 / High 4 / Medium 5 / Low 10。「書き込み済み録画データを失う経路は無い」ことはVERIFIED。finalize一回保証・@unchecked Sendable根拠(5件中4件)もVERIFIED
 - [x] 修正ラウンド1(opus委譲)完了・コミット済み(28f3d18): H1〜H4 / M1〜M5 / L1〜L4・L7 全14件。ビルド警告ゼロ・bundle成功をオーケストレーター再検証済み。逸脱2件(H3: 音声の非terminal失敗はdropsに数えず破棄=dropsは映像品質メトリクスのため / H4: .sourceEndedマップは.userStoppedのみ=対象クローズの実コードはPhase 2実測)
-- [ ] reviewer再確認(SendMessage済み、応答待ち) → PR作成
+- [x] reviewer再確認: **Approve**(コードレビューとして。14件全RESOLVED、逸脱2件妥当、M1世代トークン/M2 cancellation-immunity/L4ロック外cancelのデッドロック回避まで検証済み)。Phase 1合否は実機検証待ち
+- [ ] 修正ラウンド2(reviewer新規指摘、SendMessage済み): N1 colorMatrix明示(色ズレは録画に焼き付くため実機検証前必須) / N2 observeState初期yieldをロック内へ(終了不能・UI凍結の恒久化を1行で閉じる)
+- [ ] PR作成
 - Phase 2へ持ち越し(reviewer指摘): L5 preparingのキャンセル/タイムアウト、L6 showsCursor設定UI、L8 queue.syncの協調スレッドブロック最適化、**新規: failed時のfailureMessageが空ファイル削除後も「書き込み済みの部分は残っています」と言う不整合(修正エージェント発見。4つのユーザー向け文字列に波及するためスコープ外とした)**、**H4のR10表示精度(対象ウィンドウクローズが出す実際のSCStreamError.CodeをPhase 2のkill -9/R10試験で実測し、必要なら.sourceEndedマップに追加)**
 - 記録(L9): stall検知・ディスク監視・R10分類・マイクトラックはDESIGN.md §12ではPhase 2項目だが前倒し実装済み。**前倒し分の完了条件(2時間録画・kill -9試験)はPhase 2で消化する**
 
 ### 実機検証(要ユーザー: TCC許可ダイアログ)
 - [ ] DESIGN.md Phase 1完了条件: 30分録画・A/V同期・通知音非混入・4状態(背面/別Space/フルスクリーン前面/Stage Manager)でフレーム更新継続
+- [ ] **色が正しいこと**(N1: 420v+colorMatrix変更の確認。BT.601/709取り違えの検出)
+- [ ] **録画中に⌘W→Dockクリックでウィンドウが戻ること**(N3: 単一Windowシーンの復帰挙動は静的判定不能。戻らない場合はapplicationShouldHandleReopen+openWindow(id:)またはclose→orderOut化が必要。§5.4「close=hide」は未実装)
+- [ ] スリープ抑止(pmset -g assertions)
 - [ ] 結果をDESIGN.md §11(Assumption Ledger)に反映
 
 ## Notes(委譲ログ・逸脱記録)

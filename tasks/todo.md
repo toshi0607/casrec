@@ -44,15 +44,22 @@ DESIGN.md §11 が主台帳。実装開始時点の追加分:
 - 検証済(オーケストレーター再実行): `swift build` exit 0、`make bundle` で CasRec.app 生成+codesign成功、起動3秒確認 LAUNCH OK
 
 ### Wave 1 — 並行実装(worktree分離。担当領域外への書き込み禁止、Contracts変更は報告のみ)
-- [ ] 1a capture(sonnet): `Sources/CasRec/Capture/` — ShareableContentProvider(列挙+サムネイル+2秒更新)、CaptureService(SCStream開始/停止/エラー中継)
-- [ ] 1b recording(opus): `Sources/CasRec/Recording/` — AssetWriterCoordinator(fragmented .mov、A/V同期、finalize保証)、SessionGuards、RecordingSession状態機械
+- [x] 1a capture(sonnet): `Sources/CasRec/Capture/` — 回収済み(91076d8)。worktreeベース問題によりエージェント自己検証は無効だったが、メインで全層ビルド exit 0 を確認
+- [x] 1b recording(opus): `Sources/CasRec/Recording/` — 回収済み(b882db7)。opusは合成サンプルバッファで状態機械を実駆動検証(30+アサーション、同秒衝突バグを自己発見・修正、実HEVC .movのfinalize確認)
 - [x] 1c ui(haiku): `Sources/CasRec/UI/` — MainView / StatusView / SourcePickerView / Mocks。回収済み・メインで `swift build` exit 0(2026-08-02)
 - 検証: 各worktreeで `swift build` exit 0
 
-### Wave 2 — 統合(直列)
-- [ ] 3ブランチをfeat/phase-1へマージ、App層でDI結線
-- [ ] `swift build` + `make bundle` + 起動確認
-- [ ] スリープ抑止の動作確認(pmset -g assertions)
+### Wave 2 — 統合(直列、opus委譲)
+
+回収時検証とopus報告から確定した統合課題:
+
+- [ ] Contracts変更: (a) `CaptureSource` を `@unchecked Sendable` 化(全プロパティlet・実質immutableが根拠。無いと@MainActor UIから `start(source:)` が `sending` エラーで呼べない — opus実測) (b) `RecordingSessionControlling` に `acknowledgeFailure()` を昇格(failed→idle遷移。opusが具象に実装済み) (c) 両プロトコルに `: Sendable` 要求追加(`any` 経由の呼び出しが `sending 'session'` で失敗するため。実装は両方 @unchecked Sendable 済み) (d) `RecordingProgress.diskWarning: Bool` 追加(5GB警告のUI表示用)
+- [ ] UI修正: `nonisolated(unsafe)` / Sendableラッパー群の除去((a)(c)で不要化)、failedバナーの閉じる→ `acknowledgeFailure()` 呼び出し、モード切替時の `selectedSourceId` リセット、Mocksへの `acknowledgeFailure()` 追従
+- [ ] App結線: CaptureService + RecordingSession(DI)を生成し MainView へ。録画中の⌘Q確認ダイアログ+finishing完了待ち(§5.4)、ウィンドウclose=hide
+- [ ] `swift build` + `make bundle` + 起動確認(オーケストレーターが最終実行)
+- [ ] スリープ抑止の動作確認(pmset -g assertions、録画開始後に確認 — 実機検証と併合可)
+
+Phase 2への持ち越し(opus実測による発見): audio input が有効なのにサンプル0件だと fragmented .mov の復旧可能プレフィックスが消える(`ftyp wide mdat(0)`)。マイク拒否シナリオで顕在化しうる。kill -9 試験のマトリクスに「audio starvation」ケースを追加すること。飢餓inputの `markAsFinished()` はR3/R8とR6のトレードオフでプロダクト判断が要るため未実装。
 
 ### Phase gate
 - [ ] /code-review high(バグ)+ reviewer(DESIGN.md準拠)

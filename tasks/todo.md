@@ -46,7 +46,7 @@ DESIGN.md §11 が主台帳。実装開始時点の追加分:
 ### Wave 1 — 並行実装(worktree分離。担当領域外への書き込み禁止、Contracts変更は報告のみ)
 - [ ] 1a capture(sonnet): `Sources/CasRec/Capture/` — ShareableContentProvider(列挙+サムネイル+2秒更新)、CaptureService(SCStream開始/停止/エラー中継)
 - [ ] 1b recording(opus): `Sources/CasRec/Recording/` — AssetWriterCoordinator(fragmented .mov、A/V同期、finalize保証)、SessionGuards、RecordingSession状態機械
-- [ ] 1c ui(haiku、失敗時sonnet): `Sources/CasRec/UI/` — RecordView / StatusView / SourcePicker(Contracts準拠のモックで動作)
+- [x] 1c ui(haiku): `Sources/CasRec/UI/` — MainView / StatusView / SourcePickerView / Mocks。回収済み・メインで `swift build` exit 0(2026-08-02)
 - 検証: 各worktreeで `swift build` exit 0
 
 ### Wave 2 — 統合(直列)
@@ -70,3 +70,4 @@ DESIGN.md §11 が主台帳。実装開始時点の追加分:
 - 2026-08-02: CLT 26.6インストール完了(SDK 26.5 / Swift 6.3.3)。probe全API通過、MiniProbe.appでGUI起動確認。Wave 0委譲開始(sonnet、メインcheckoutで単独writer)。
 - 2026-08-02: Wave 0完了・検証済(sonnet)。Contracts.swiftにCaptureEndReasonが追加された(didStopWithErrorの中継チャネル。R10対応に必要と判断、妥当)。CaptureSourceは非Sendable(SCK型内包)— Wave 1a/1cは@MainActor寄せで対処する方針をプロンプトに明記済み。
 - 2026-08-02: Wave 1並行起動(worktree分離、background): 1a Capture=sonnet / 1b Recording=opus / 1c UI=haiku。コミットはオーケストレーターが回収時に実施。
+- 2026-08-02: Wave 1c(UI、haiku)回収。§7準拠・ビルド通過。**Wave 2統合課題**: (1) failed→idleへ戻す遷移がContractsに無くUIのリセットが機能しない → RecordingSession.start()をfailedからも受理する形に調整 (2) モード切替時にselectedSourceIdをリセット(フィルタ外ソースで録画開始できてしまう) (3) `nonisolated(unsafe)`/`@unchecked Sendable`ラッパー多用の整理(Contractsプロトコルの@MainActor化かCaptureSourceのSendable化を1a/1b実装を見て判断) (4) Mocks.swiftの#if DEBUG化検討。#Previewは未実装(Xcode不在で実害なし、不問)。

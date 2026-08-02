@@ -66,9 +66,9 @@ Phase 2への持ち越し(opus実測による発見): audio input が有効な�
 ### Phase gate
 - [x] reviewer(opus、フレッシュコンテキスト)による静的レビュー実施(2026-08-02)。※このセッションに/code-reviewコマンドが無いため、バグ検出と設計準拠をreviewer 1本でカバー(逸脱記録)
 - 結果: **Request Changes** — Critical 0 / High 4 / Medium 5 / Low 10。「書き込み済み録画データを失う経路は無い」ことはVERIFIED。finalize一回保証・@unchecked Sendable根拠(5件中4件)もVERIFIED
-- [ ] 修正ラウンド1(opus委譲): H1 権限フロー実装(空catch解消含む) / H2 録画中のソースポーリング停止 / H3 append失敗はwriter.status確認後にのみラッチ / H4 classifyStopReasonをSCStreamErrorコード判定に / M1 didStopWithError取りこぼし窓 / M2 stopCaptureタイムアウト(§4不変条件) / M3 空成果物+孤児サイドカー掃除 / M4 pixelFormat 420v化 / M5 filter.contentRectで解像度決定 / L1 SessionGuardsの偽根拠コメント修正 / L2 単一Windowシーン化 / L3 状態ストリームbufferingNewest(1) / L4 finalizeでのオブザーバ片付け / L7 終了抑止を録画中のみに
-- [ ] reviewer再確認(SendMessage) → PR作成
-- Phase 2へ持ち越し(reviewer指摘): L5 preparingのキャンセル/タイムアウト、L6 showsCursor設定UI、L8 queue.syncの協調スレッドブロック最適化
+- [x] 修正ラウンド1(opus委譲)完了・コミット済み(28f3d18): H1〜H4 / M1〜M5 / L1〜L4・L7 全14件。ビルド警告ゼロ・bundle成功をオーケストレーター再検証済み。逸脱2件(H3: 音声の非terminal失敗はdropsに数えず破棄=dropsは映像品質メトリクスのため / H4: .sourceEndedマップは.userStoppedのみ=対象クローズの実コードはPhase 2実測)
+- [ ] reviewer再確認(SendMessage済み、応答待ち) → PR作成
+- Phase 2へ持ち越し(reviewer指摘): L5 preparingのキャンセル/タイムアウト、L6 showsCursor設定UI、L8 queue.syncの協調スレッドブロック最適化、**新規: failed時のfailureMessageが空ファイル削除後も「書き込み済みの部分は残っています」と言う不整合(修正エージェント発見。4つのユーザー向け文字列に波及するためスコープ外とした)**、**H4のR10表示精度(対象ウィンドウクローズが出す実際のSCStreamError.CodeをPhase 2のkill -9/R10試験で実測し、必要なら.sourceEndedマップに追加)**
 - 記録(L9): stall検知・ディスク監視・R10分類・マイクトラックはDESIGN.md §12ではPhase 2項目だが前倒し実装済み。**前倒し分の完了条件(2時間録画・kill -9試験)はPhase 2で消化する**
 
 ### 実機検証(要ユーザー: TCC許可ダイアログ)

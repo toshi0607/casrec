@@ -61,11 +61,15 @@ DESIGN.md §11 が主台帳。実装開始時点の追加分:
 
 Wave 2残課題(reviewerへの申し送り、既知): (1) failed時にアラートとインラインバナーが二重表示(UI設計判断待ち) (2) Mocks.swiftが参照ゼロのデッドコード(#if DEBUG化候補) (3) ⌘Q確認は録画開始直後の1ホップ分すり抜け窓あり(実害極小と判断) (4) 実行時挙動(⌘Qダイアログ・diskWarningバナー・スリープ抑止)は未検証 → 実機検証へ
 
-Phase 2への持ち越し(opus実測による発見): audio input が有効なのにサンプル0件だと fragmented .mov の復旧可能プレフィックスが消える(`ftyp wide mdat(0)`)。マイク拒否シナリオで顕在化しうる。kill -9 試験のマトリクスに「audio starvation」ケースを追加すること。飢餓inputの `markAsFinished()` はR3/R8とR6のトレードオフでプロダクト判断が要るため未実装。
+Phase 2への持ち越し(opus実測による発見): audio input が有効なのにサンプル0件だと fragmented .mov の復旧可能プレフィックスが消える(`ftyp wide mdat(0)`)。マイク拒否シナリオに加え、**既定設定(captureAppAudio=true)+対象アプリが完全無音のケースでも成立する**(reviewer L10)。kill -9 試験のマトリクスに「audio starvation(mic拒否/無音アプリの両方)」を追加すること。飢餓inputの `markAsFinished()` はR3/R8とR6のトレードオフでプロダクト判断が要るため未実装。
 
 ### Phase gate
-- [ ] /code-review high(バグ)+ reviewer(DESIGN.md準拠)
-- [ ] findings対応 → PR作成
+- [x] reviewer(opus、フレッシュコンテキスト)による静的レビュー実施(2026-08-02)。※このセッションに/code-reviewコマンドが無いため、バグ検出と設計準拠をreviewer 1本でカバー(逸脱記録)
+- 結果: **Request Changes** — Critical 0 / High 4 / Medium 5 / Low 10。「書き込み済み録画データを失う経路は無い」ことはVERIFIED。finalize一回保証・@unchecked Sendable根拠(5件中4件)もVERIFIED
+- [ ] 修正ラウンド1(opus委譲): H1 権限フロー実装(空catch解消含む) / H2 録画中のソースポーリング停止 / H3 append失敗はwriter.status確認後にのみラッチ / H4 classifyStopReasonをSCStreamErrorコード判定に / M1 didStopWithError取りこぼし窓 / M2 stopCaptureタイムアウト(§4不変条件) / M3 空成果物+孤児サイドカー掃除 / M4 pixelFormat 420v化 / M5 filter.contentRectで解像度決定 / L1 SessionGuardsの偽根拠コメント修正 / L2 単一Windowシーン化 / L3 状態ストリームbufferingNewest(1) / L4 finalizeでのオブザーバ片付け / L7 終了抑止を録画中のみに
+- [ ] reviewer再確認(SendMessage) → PR作成
+- Phase 2へ持ち越し(reviewer指摘): L5 preparingのキャンセル/タイムアウト、L6 showsCursor設定UI、L8 queue.syncの協調スレッドブロック最適化
+- 記録(L9): stall検知・ディスク監視・R10分類・マイクトラックはDESIGN.md §12ではPhase 2項目だが前倒し実装済み。**前倒し分の完了条件(2時間録画・kill -9試験)はPhase 2で消化する**
 
 ### 実機検証(要ユーザー: TCC許可ダイアログ)
 - [ ] DESIGN.md Phase 1完了条件: 30分録画・A/V同期・通知音非混入・4状態(背面/別Space/フルスクリーン前面/Stage Manager)でフレーム更新継続

@@ -237,8 +237,8 @@ SCStream
 | 画面収録(TCC) | 初回の `SCShareableContent` 取得時にOSが要求。未許可時は設定誘導UIを表示 |
 | マイク | `NSMicrophoneUsageDescription`。マイクトグル有効化時のみ要求 |
 | App Sandbox | **無効**(個人ビルド・非配布のため。ffmpeg起動やMovies配下書き込みが単純になる)。将来配布する場合は Sandbox 有効化・security-scoped bookmark・ffmpeg同梱または別導線・公証を再検討する |
-| 署名 | ローカルの開発証明書で固定。**署名が変わるとTCC許可がリセットされるため、ad-hoc署名でのビルドは避ける**(開発時の落とし穴) |
-| プロジェクト | Xcodeプロジェクト、単一Appターゲット。ディレクトリは§10 |
+| 署名 | 安定した署名でTCC許可を維持する(署名が変わると再許可が必要)。開発機に有効な証明書が無いため、まずad-hoc署名で開始し、TCC再許可の摩擦が確認された時点で自己署名のコード署名証明書を作成して固定する |
+| プロジェクト | SwiftPMパッケージ(executable)+ Makefileで.appバンドル生成(開発機にXcodeが無いため。導入時はPackage.swiftをXcodeで直接開ける)。ディレクトリは§10 |
 
 ## 9. 既知の制約(仕様として明記)
 
@@ -254,9 +254,12 @@ SCStream
 ```
 casrec/
 ├── DESIGN.md
-├── tasks/                  # todo.md / lessons.md(実装開始時に作成)
-└── CasRec/                 # Xcodeプロジェクト
+├── tasks/                  # todo.md / lessons.md
+├── Package.swift           # SwiftPM(executable CasRec、macOS 15+)
+├── Makefile                # build / bundle(.app生成+Info.plist+codesign)/ run
+└── Sources/CasRec/
     ├── App/                # エントリポイント、AppDelegate(終了ガード)
+    ├── Core/               # Contracts(層間の共有型・プロトコル)
     ├── Capture/            # CaptureService, ShareableContentProvider
     ├── Recording/          # RecordingSession, AssetWriterCoordinator, SessionGuards
     ├── PostProcess/        # Compressor, GifConverter, FfmpegLocator

@@ -1,0 +1,4 @@
+.build/
+CasRec.app/
+.DS_Store
+.swiftpm/

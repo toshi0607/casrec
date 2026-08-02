@@ -22,6 +22,25 @@ struct StatusView: View {
 
     var body: some View {
         VStack(spacing: 8) {
+            if progress.diskWarning {
+                HStack(spacing: 8) {
+                    Image(systemName: "externaldrive.fill.badge.exclamationmark")
+                        .foregroundColor(.yellow)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Low Disk Space")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                        Text("保存先の空き容量が5GB未満です。2GB未満になると録画を自動停止します")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding(8)
+                .background(Color.yellow.opacity(0.1))
+                .cornerRadius(6)
+            }
+
             if progress.isStalled {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.circle.fill")

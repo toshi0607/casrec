@@ -1,12 +1,8 @@
 import SwiftUI
 
-struct SendableCaptureSourceRef: @unchecked Sendable {
-    let value: CaptureSource
-}
-
 struct MainView: View {
-    nonisolated(unsafe) let session: any RecordingSessionControlling
-    nonisolated(unsafe) let captureService: any CaptureServicing
+    let session: any RecordingSessionControlling
+    let captureService: any CaptureServicing
 
     @State private var currentState: RecordingState = .idle
     @State private var sources: [CaptureSource] = []
@@ -35,8 +31,14 @@ struct MainView: View {
         return false
     }
 
+    /// Only the sources matching the current mode are offered, so the selection must be
+    /// resolved against that list — never against the full one.
+    var visibleSources: [CaptureSource] {
+        sources.filter { $0.kind == captureMode }
+    }
+
     var selectedSource: CaptureSource? {
-        sources.first { $0.id == selectedSourceId }
+        visibleSources.first { $0.id == selectedSourceId }
     }
 
     var body: some View {
@@ -93,12 +95,15 @@ struct MainView: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(maxWidth: 250)
+                .onChange(of: captureMode) {
+                    syncSelection()
+                }
 
                 Spacer()
             }
 
             SourcePickerView(
-                sources: sources.filter { $0.kind == captureMode },
+                sources: visibleSources,
                 selectedSourceId: $selectedSourceId
             )
         }
@@ -237,10 +242,15 @@ struct MainView: View {
 
                 Button(action: {
                     errorMessage = nil
+                    // Without this the session stays `failed` forever and every later
+                    // start is ignored (§4: failed -> idle).
+                    Task {
+                        await session.acknowledgeFailure()
+                    }
                 }) {
                     HStack {
-                        Image(systemName: "play.circle.fill")
-                        Text("Start Recording")
+                        Image(systemName: "xmark.circle.fill")
+                        Text("Dismiss")
                     }
                     .frame(maxWidth: .infinity)
                     .padding(12)
@@ -251,10 +261,9 @@ struct MainView: View {
             } else {
                 Button(action: {
                     guard let source = selectedSource else { return }
-                    let sendableSource = SendableCaptureSourceRef(value: source)
                     let capturedSettings = settings
                     Task {
-                        await session.start(source: sendableSource.value, settings: capturedSettings)
+                        await session.start(source: source, settings: capturedSettings)
                     }
                 }) {
                     HStack {
@@ -287,9 +296,16 @@ struct MainView: View {
         let stream = captureService.observeSources()
         for await sourcesUpdate in stream {
             sources = sourcesUpdate
-            if selectedSourceId == nil, let first = sourcesUpdate.first {
-                selectedSourceId = first.id
-            }
+            syncSelection()
         }
+    }
+
+    /// Keeps `selectedSourceId` pointing at something the user can actually see: the first
+    /// entry of the current mode's list whenever the selection is empty or has dropped out
+    /// of it (mode switch, or the selected window closing).
+    private func syncSelection() {
+        let visible = visibleSources
+        guard !visible.contains(where: { $0.id == selectedSourceId }) else { return }
+        selectedSourceId = visible.first?.id
     }
 }

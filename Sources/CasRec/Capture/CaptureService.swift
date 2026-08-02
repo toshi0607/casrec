@@ -8,16 +8,14 @@ import ScreenCaptureKit
 /// `ShareableContentProvider`), `SCContentFilter`/`SCStreamConfiguration` construction,
 /// and the active `SCStream`'s start/stop/error relay (DESIGN.md §4).
 ///
-/// `CaptureServicing` is a plain, non-isolated protocol whose `startCapture` requirement
-/// takes a non-`Sendable` `CaptureSource` without `sending`, so a globally-isolated
-/// (`@MainActor` or custom actor) witness cannot accept it — the compiler rejects moving
-/// a non-Sendable parameter into an isolated implementation. This type therefore stays a
-/// plain, unisolated class and is `@unchecked Sendable`: its `SCStream`/`StreamRelay`
-/// stream state is non-Sendable ScreenCaptureKit/ObjC state, manually protected by
-/// `lock` instead of actor isolation. `observeSources()` runs its periodic
-/// `ShareableContentProvider.fetchSources()` polling loop inside a `Task { @MainActor in }`
-/// so the non-Sendable `CaptureSource` values it yields are produced on the same,
-/// UI-friendly isolation domain their `@MainActor` SwiftUI consumer will read them on.
+/// `CaptureServicing` is a plain, non-isolated protocol, and this type stays a plain,
+/// unisolated class to match: it is driven from `RecordingSession`, which is itself
+/// unisolated, and there is nothing here that belongs on the main actor. It is
+/// `@unchecked Sendable` because its `SCStream`/`StreamRelay` state is non-Sendable
+/// ScreenCaptureKit/ObjC state, manually protected by `lock` instead of actor isolation.
+/// `observeSources()` runs its periodic `ShareableContentProvider.fetchSources()` polling
+/// loop inside a `Task { @MainActor in }`, producing the source list on the same isolation
+/// domain its `@MainActor` SwiftUI consumer reads it on.
 ///
 /// The hot per-frame path (`SCStreamOutput`) also stays off any actor: `StreamRelay`
 /// below is a plain, immutable-after-init, genuinely `Sendable` `NSObject` that forwards

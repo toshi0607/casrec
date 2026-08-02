@@ -19,9 +19,9 @@ import Synchronization
 ///
 /// ## Thread safety
 ///
-/// `RecordingSessionControlling` is a non-isolated protocol, so this cannot be an `actor`
-/// or a `@MainActor` class — `CaptureSource` is not `Sendable`, and a conformance on
-/// either would require sending it across an isolation boundary. Instead all mutable
+/// `RecordingSessionControlling` is a non-isolated protocol, and this type stays
+/// non-isolated with it: the capture callbacks it coordinates arrive on ScreenCaptureKit's
+/// own queues, so hopping everything onto an actor would buy nothing. Instead all mutable
 /// state lives in `state`, a `Mutex`, and the lock is never held across an `await`. State
 /// transitions are compare-and-set operations inside a single `withLock`, which is what
 /// makes the concurrent stop paths safe without an actor. The `@unchecked Sendable`
@@ -62,6 +62,8 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
         var phase: Phase = .idle
         var lastState: RecordingState = .idle
         var startedAt: Date?
+        /// Latched by the disk observer below 5 GB, cleared when space recovers (§5.4).
+        var diskWarning = false
         var writer: AssetWriterCoordinator?
         var artifacts: RecordingArtifacts?
         var ticker: Task<Void, Never>?
@@ -102,6 +104,7 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
         let claimed = state.withLock { current -> Bool in
             guard case .idle = current.phase else { return false }
             current.phase = .preparing
+            current.diskWarning = false
             // Any observer left over from a previous session that never terminated.
             current.captureEndedObserver?.cancel()
             current.captureEndedObserver = nil
@@ -182,9 +185,14 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
             }
             current.diskObserver = Task { [self] in
                 for await status in diskSpace {
-                    if case .critical = status {
+                    switch status {
+                    case .normal:
+                        setDiskWarning(false)
+                    case .warning:
+                        setDiskWarning(true)
+                    case .critical:
                         await finalize(reason: .diskCritical)
-                        break
+                        return
                     }
                 }
             }
@@ -197,13 +205,10 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
         await finalize(reason: .manual)
     }
 
-    // MARK: - Additive API
-
     /// Clears a `failed` state once the UI has shown the message, returning the session to
-    /// `idle` so a new recording can start.
-    ///
-    /// `RecordingSessionControlling` has no member for the `failed -> idle` edge that
-    /// DESIGN.md §4 requires, so it lives here until the contract grows one.
+    /// `idle` so a new recording can start — the `failed -> idle` edge of §4. Synchronous
+    /// because it is only a lock-guarded transition; it satisfies the protocol's `async`
+    /// requirement unchanged.
     func acknowledgeFailure() {
         let cleared = state.withLock { current -> Bool in
             guard case .failed = current.phase else { return false }
@@ -310,15 +315,26 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
         return writer?.stats.writeFailure
     }
 
+    /// Records the 5 GB warning and republishes at once, so the banner appears when the
+    /// poll observes it rather than up to a tick later.
+    private func setDiskWarning(_ warning: Bool) {
+        let changed = state.withLock { current -> Bool in
+            guard current.diskWarning != warning else { return false }
+            current.diskWarning = warning
+            return true
+        }
+        if changed { emitProgress() }
+    }
+
     private func emitProgress() {
-        let context = state.withLock { current -> (Date, AssetWriterCoordinator)? in
+        let context = state.withLock { current -> (Date, AssetWriterCoordinator, Bool)? in
             guard case .recording = current.phase,
                   let startedAt = current.startedAt,
                   let writer = current.writer
             else { return nil }
-            return (startedAt, writer)
+            return (startedAt, writer, current.diskWarning)
         }
-        guard let (startedAt, writer) = context else { return }
+        guard let (startedAt, writer, diskWarning) = context else { return }
 
         let stats = writer.stats
         // Before the first frame arrives, measure the stall from the session start.
@@ -327,7 +343,8 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
             startedAt: startedAt,
             bytesWritten: stats.bytesWritten,
             droppedFrames: stats.droppedFrames,
-            isStalled: Date().timeIntervalSince(lastActivity) > Self.stallThreshold
+            isStalled: Date().timeIntervalSince(lastActivity) > Self.stallThreshold,
+            diskWarning: diskWarning
         )
 
         // Re-check the phase while publishing so a tick that raced with `finalize` cannot

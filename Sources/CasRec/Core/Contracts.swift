@@ -27,6 +27,9 @@ struct RecordingProgress: Sendable, Equatable {
     var bytesWritten: Int64
     var droppedFrames: Int
     var isStalled: Bool
+    /// Free space on the destination volume fell below 5 GB — the UI warns while recording
+    /// continues; the automatic stop happens at 2 GB (§5.4).
+    var diskWarning: Bool = false
 }
 
 // MARK: - Recording settings (DESIGN.md §5.1)
@@ -73,7 +76,13 @@ enum CaptureSourceKind: Sendable, Equatable, CaseIterable {
 
 /// One entry in the source picker: a display or window available to capture, with the
 /// underlying ScreenCaptureKit object needed to build an `SCContentFilter` (§5.2).
-struct CaptureSource: Identifiable {
+///
+/// `@unchecked Sendable` because every stored property is a `let`, making the value
+/// effectively immutable: the ScreenCaptureKit references are only ever read — handed to
+/// `SCContentFilter`'s initialisers when a capture starts — and `thumbnail` is only ever
+/// drawn. Without this the UI layer, which is `@MainActor`, cannot pass a picked source to
+/// the recording layer at all.
+struct CaptureSource: Identifiable, @unchecked Sendable {
     let id: String
     let kind: CaptureSourceKind
     let title: String
@@ -114,7 +123,11 @@ enum CaptureEndReason: Sendable, Equatable {
 /// Owns `SCShareableContent` enumeration, `SCContentFilter` construction, and
 /// `SCStream` start/stop/error relay. The UI layer is decoupled from this via
 /// `AsyncStream`, per §4.
-protocol CaptureServicing {
+///
+/// `Sendable` is a requirement, not a courtesy: the `@MainActor` UI layer holds this as an
+/// existential and calls it from detached tasks, which the compiler rejects for a
+/// non-`Sendable` `any` type.
+protocol CaptureServicing: Sendable {
     /// Available displays and windows, refreshed periodically with thumbnails.
     func observeSources() -> AsyncStream<[CaptureSource]>
 
@@ -134,7 +147,10 @@ protocol CaptureServicing {
 
 /// Owns one recording's lifecycle and state machine (see the diagram above), including
 /// starting/stopping `SessionGuards` (sleep prevention, disk monitoring).
-protocol RecordingSessionControlling {
+///
+/// `Sendable` for the same reason as `CaptureServicing`: the `@MainActor` UI holds this as
+/// an existential and drives it from tasks.
+protocol RecordingSessionControlling: Sendable {
     /// The current state, observable by the UI layer.
     func observeState() -> AsyncStream<RecordingState>
 
@@ -143,4 +159,7 @@ protocol RecordingSessionControlling {
 
     /// recording -> finishing -> idle. No-op unless currently recording.
     func stop() async
+
+    /// failed -> idle, once the UI has shown the message. No-op in any other state.
+    func acknowledgeFailure() async
 }

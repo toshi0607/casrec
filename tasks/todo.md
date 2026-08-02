@@ -53,11 +53,13 @@ DESIGN.md §11 が主台帳。実装開始時点の追加分:
 
 回収時検証とopus報告から確定した統合課題:
 
-- [ ] Contracts変更: (a) `CaptureSource` を `@unchecked Sendable` 化(全プロパティlet・実質immutableが根拠。無いと@MainActor UIから `start(source:)` が `sending` エラーで呼べない — opus実測) (b) `RecordingSessionControlling` に `acknowledgeFailure()` を昇格(failed→idle遷移。opusが具象に実装済み) (c) 両プロトコルに `: Sendable` 要求追加(`any` 経由の呼び出しが `sending 'session'` で失敗するため。実装は両方 @unchecked Sendable 済み) (d) `RecordingProgress.diskWarning: Bool` 追加(5GB警告のUI表示用)
-- [ ] UI修正: `nonisolated(unsafe)` / Sendableラッパー群の除去((a)(c)で不要化)、failedバナーの閉じる→ `acknowledgeFailure()` 呼び出し、モード切替時の `selectedSourceId` リセット、Mocksへの `acknowledgeFailure()` 追従
-- [ ] App結線: CaptureService + RecordingSession(DI)を生成し MainView へ。録画中の⌘Q確認ダイアログ+finishing完了待ち(§5.4)、ウィンドウclose=hide
-- [ ] `swift build` + `make bundle` + 起動確認(オーケストレーターが最終実行)
-- [ ] スリープ抑止の動作確認(pmset -g assertions、録画開始後に確認 — 実機検証と併合可)
+- [x] Contracts変更 (a)〜(d) — 完了(opus)。acknowledgeFailureはプロトコルasync/具象同期(Swiftの準拠規則で正当、コメント記載)
+- [x] UI修正 — unsafe/ラッパー残存ゼロ(grep確認済み)、failed→Dismiss→acknowledgeFailure、visibleSources+syncSelection(選択中ウィンドウ消滅もカバー)、diskWarningバナー
+- [x] App結線 — AppDelegate DI、⌘Q確認は .terminateLater + 状態追跡(preparing中のstop() no-op素通り対策)、last-window-close で終了しない
+- [x] `swift build` exit 0(警告ゼロ)+ `make bundle` + 起動3秒確認(オーケストレーター再検証済み、2026-08-02)
+- [ ] スリープ抑止の動作確認(pmset -g assertions)— 録画開始が必要なため実機検証に併合
+
+Wave 2残課題(reviewerへの申し送り、既知): (1) failed時にアラートとインラインバナーが二重表示(UI設計判断待ち) (2) Mocks.swiftが参照ゼロのデッドコード(#if DEBUG化候補) (3) ⌘Q確認は録画開始直後の1ホップ分すり抜け窓あり(実害極小と判断) (4) 実行時挙動(⌘Qダイアログ・diskWarningバナー・スリープ抑止)は未検証 → 実機検証へ
 
 Phase 2への持ち越し(opus実測による発見): audio input が有効なのにサンプル0件だと fragmented .mov の復旧可能プレフィックスが消える(`ftyp wide mdat(0)`)。マイク拒否シナリオで顕在化しうる。kill -9 試験のマトリクスに「audio starvation」ケースを追加すること。飢餓inputの `markAsFinished()` はR3/R8とR6のトレードオフでプロダクト判断が要るため未実装。
 

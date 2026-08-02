@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-nonisolated(unsafe) let mockSourcesList: [CaptureSource] = [
+let mockSourcesList: [CaptureSource] = [
     CaptureSource(
         id: "display-0",
         kind: .display,
@@ -34,43 +34,24 @@ nonisolated(unsafe) let mockSourcesList: [CaptureSource] = [
     ),
 ]
 
-struct SendableRecordingSession: @unchecked Sendable {
-    let inner: MockRecordingSession
-
-    func observeState() -> AsyncStream<RecordingState> {
-        inner.observeState()
-    }
-
-    func start(source: CaptureSource, settings: RecordingSettings) async {
-        await inner.start(source: source, settings: settings)
-    }
-
-    func stop() async {
-        await inner.stop()
-    }
-}
-
-extension SendableRecordingSession: RecordingSessionControlling {}
-
-class MockRecordingSession {
+/// Walks the §4 state machine on a timer, without ScreenCaptureKit or a writer, so the
+/// recording screen can be exercised without the screen-recording permission.
+///
+/// `@unchecked Sendable`: every mutable member is read and written under `lock`.
+final class MockRecordingSession: RecordingSessionControlling, @unchecked Sendable {
     private var state: RecordingState = .idle
     private let lock = NSLock()
 
     func observeState() -> AsyncStream<RecordingState> {
-        struct SendableSelf: @unchecked Sendable {
-            let value: MockRecordingSession
-        }
-
-        let sendableSource = SendableSelf(value: self)
-        return AsyncStream { continuation in
-            let initialState = sendableSource.value.getState()
+        AsyncStream { continuation in
+            let initialState = getState()
             continuation.yield(initialState)
 
             let task = Task {
                 var lastState = initialState
                 while !Task.isCancelled {
                     try? await Task.sleep(nanoseconds: 100_000_000)
-                    let currentState = sendableSource.value.getState()
+                    let currentState = getState()
                     if currentState != lastState {
                         lastState = currentState
                         continuation.yield(currentState)
@@ -110,6 +91,14 @@ class MockRecordingSession {
         setState(.idle)
     }
 
+    func acknowledgeFailure() {
+        lock.withLock {
+            if case .failed = state {
+                state = .idle
+            }
+        }
+    }
+
     private func getState() -> RecordingState {
         lock.withLock { state }
     }
@@ -131,39 +120,20 @@ class MockRecordingSession {
     }
 }
 
-struct SendableCaptureService: @unchecked Sendable {
-    let inner: MockCaptureService
-
-    func observeSources() -> AsyncStream<[CaptureSource]> {
-        inner.observeSources()
-    }
-
-    func startCapture(source: CaptureSource, settings: RecordingSettings, sink: any SampleConsuming) async throws {
-        try await inner.startCapture(source: source, settings: settings, sink: sink)
-    }
-
-    func stopCapture() async {
-        await inner.stopCapture()
-    }
-
-    func observeCaptureEnded() -> AsyncStream<CaptureEndReason> {
-        inner.observeCaptureEnded()
-    }
-}
-
-extension SendableCaptureService: CaptureServicing {}
-
-class MockCaptureService {
+/// Serves a fixed source list and captures nothing. Stateless, hence genuinely `Sendable`.
+final class MockCaptureService: CaptureServicing {
     func observeSources() -> AsyncStream<[CaptureSource]> {
         AsyncStream { continuation in
             continuation.yield(mockSourcesList)
-            Task {
+            let task = Task {
                 while !Task.isCancelled {
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
                     continuation.yield(mockSourcesList)
                 }
             }
-            continuation.onTermination = { _ in }
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
         }
     }
 

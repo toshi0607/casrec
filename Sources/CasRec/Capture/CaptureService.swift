@@ -26,6 +26,10 @@ final class CaptureService: CaptureServicing, @unchecked Sendable {
     private let lock = NSLock()
     private var activeStream: SCStream?
     private var activeRelay: StreamRelay?
+    /// Identifies the current capture. Each `startCapture` claims the next value, and a
+    /// `didStopWithError` callback carries the generation it was created with, so a late
+    /// callback from a superseded stream cannot tear down its successor.
+    private var activeGeneration = 0
     private var endedContinuation: AsyncStream<CaptureEndReason>.Continuation?
 
     private static let videoQueue = DispatchQueue(label: "dev.casrec.capture.video")
@@ -40,17 +44,18 @@ final class CaptureService: CaptureServicing, @unchecked Sendable {
 
     // MARK: - CaptureServicing
 
-    func observeSources() -> AsyncStream<[CaptureSource]> {
+    func observeSources() -> AsyncStream<CaptureSourcesUpdate> {
         AsyncStream { continuation in
             let pollTask = Task { @MainActor in
                 while !Task.isCancelled {
                     do {
                         let sources = try await ShareableContentProvider.fetchSources()
-                        continuation.yield(sources)
+                        continuation.yield(.sources(sources))
                     } catch {
-                        // Most commonly: screen-recording permission not granted yet.
-                        // Keep polling — the list will populate once the user grants it.
-                        continuation.yield([])
+                        // Polling continues either way: a permission grant or a transient
+                        // failure clears itself, and the reason travels to the UI rather
+                        // than being flattened into an empty list (§5.5).
+                        continuation.yield(.unavailable(Self.classifyEnumerationFailure(error)))
                     }
                     try? await Task.sleep(for: .seconds(2))
                 }
@@ -71,22 +76,36 @@ final class CaptureService: CaptureServicing, @unchecked Sendable {
         let filter = try await Self.makeFilter(for: source)
         let configuration = Self.makeConfiguration(source: source, filter: filter, settings: settings)
 
+        let generation = withLock { () -> Int in
+            activeGeneration += 1
+            return activeGeneration
+        }
         let newRelay = StreamRelay(sink: sink) { [weak self] error in
-            self?.handleStreamStopped(error: error)
+            self?.handleStreamStopped(error: error, generation: generation)
         }
 
         let newStream = SCStream(filter: filter, configuration: configuration, delegate: newRelay)
-        try newStream.addStreamOutput(newRelay, type: .screen, sampleHandlerQueue: Self.videoQueue)
-        try newStream.addStreamOutput(newRelay, type: .audio, sampleHandlerQueue: Self.audioQueue)
-        if settings.captureMicrophone {
-            try newStream.addStreamOutput(newRelay, type: .microphone, sampleHandlerQueue: Self.microphoneQueue)
-        }
-
-        try await newStream.startCapture()
-
+        // Published before `startCapture()` rather than after: `didStopWithError` can fire
+        // while that call is still in flight, and a callback that arrives before the stream
+        // is on record would be discarded, leaving the session stuck in `recording` (§4).
         withLock {
             activeStream = newStream
             activeRelay = newRelay
+        }
+        do {
+            try newStream.addStreamOutput(newRelay, type: .screen, sampleHandlerQueue: Self.videoQueue)
+            try newStream.addStreamOutput(newRelay, type: .audio, sampleHandlerQueue: Self.audioQueue)
+            if settings.captureMicrophone {
+                try newStream.addStreamOutput(newRelay, type: .microphone, sampleHandlerQueue: Self.microphoneQueue)
+            }
+            try await newStream.startCapture()
+        } catch {
+            withLock {
+                guard activeGeneration == generation else { return }
+                activeStream = nil
+                activeRelay = nil
+            }
+            throw error
         }
     }
 
@@ -126,11 +145,12 @@ final class CaptureService: CaptureServicing, @unchecked Sendable {
         }
     }
 
-    private func handleStreamStopped(error: Error) {
-        // A `didStopWithError` callback can race a manual `stopCapture()`; only
-        // report it if this is still the active stream.
+    private func handleStreamStopped(error: Error, generation: Int) {
+        // A `didStopWithError` callback can race a manual `stopCapture()`, and a stream
+        // that has already been replaced can still call back afterwards; report only when
+        // this is the capture currently on record.
         let continuation = withLock { () -> AsyncStream<CaptureEndReason>.Continuation? in
-            guard activeStream != nil else { return nil }
+            guard activeGeneration == generation, activeStream != nil else { return nil }
             activeStream = nil
             activeRelay = nil
             return endedContinuation
@@ -166,13 +186,15 @@ final class CaptureService: CaptureServicing, @unchecked Sendable {
         let configuration = SCStreamConfiguration()
 
         let scale = resolvedPixelScale(filter: filter, source: source)
-        let nativeSize = nativePixelSize(source: source, scale: scale)
+        let nativeSize = nativePixelSize(filter: filter, source: source, scale: scale)
         let percent = CGFloat(settings.scalePercent) / 100.0
-        configuration.width = evenPixelCount(CGFloat(nativeSize.width) * percent)
-        configuration.height = evenPixelCount(CGFloat(nativeSize.height) * percent)
+        configuration.width = evenPixelCount(nativeSize.width * percent)
+        configuration.height = evenPixelCount(nativeSize.height * percent)
 
         configuration.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(settings.fps))
-        configuration.pixelFormat = kCVPixelFormatType_32BGRA
+        // Bi-planar 4:2:0 is what the HEVC/H.264 encoders want: half the bytes per pixel of
+        // BGRA and no colour conversion on every frame of a multi-hour recording (R5).
+        configuration.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         configuration.capturesAudio = settings.captureAppAudio
         configuration.excludesCurrentProcessAudio = true
         configuration.captureMicrophone = settings.captureMicrophone
@@ -193,18 +215,22 @@ final class CaptureService: CaptureServicing, @unchecked Sendable {
         return fallbackPixelScale(for: source)
     }
 
-    private static func nativePixelSize(source: CaptureSource, scale: CGFloat) -> (width: Int, height: Int) {
-        switch source.kind {
-        case .window:
-            let width = source.frame.width * scale
-            let height = source.frame.height * scale
-            return (Int(width.rounded()), Int(height.rounded()))
-        case .display:
-            guard let display = source.scDisplay else {
-                return (Int((source.frame.width * scale).rounded()), Int((source.frame.height * scale).rounded()))
-            }
-            return (Int((CGFloat(display.width) * scale).rounded()), Int((CGFloat(display.height) * scale).rounded()))
-        }
+    /// Native pixel size of what the filter will actually deliver.
+    ///
+    /// `SCContentFilter.contentRect` is the authority here, not `source.frame`: the source
+    /// list is up to two seconds old, so a window resized just before recording started
+    /// would otherwise be captured at its previous size and letterboxed for the whole
+    /// session. `contentRect` is in points; `scale` converts it to pixels.
+    private static func nativePixelSize(
+        filter: SCContentFilter,
+        source: CaptureSource,
+        scale: CGFloat
+    ) -> (width: CGFloat, height: CGFloat) {
+        let contentSize = filter.contentRect.size
+        // Only if ScreenCaptureKit has no rect to give (a source that vanished between
+        // enumeration and here) is the stale frame better than nothing.
+        let size = contentSize.width > 0 && contentSize.height > 0 ? contentSize : source.frame.size
+        return (size.width * scale, size.height * scale)
     }
 
     /// Rounds up to an even pixel count — HEVC/H.264 encoders require even
@@ -241,23 +267,41 @@ final class CaptureService: CaptureServicing, @unchecked Sendable {
         max(0, rect.width) * max(0, rect.height)
     }
 
-    /// Best-effort classification of a `didStopWithError` callback into
-    /// `CaptureEndReason`. ScreenCaptureKit doesn't expose a stable, documented
-    /// error-code taxonomy for "the source disappeared" vs. "something broke", so
-    /// this inspects the bridged `NSError`'s domain/code/description for known
-    /// signals and otherwise defers to `.failed`, carrying the raw domain/code so
-    /// it can be refined later (see the Capture-layer task's Wave 2 note).
+    // MARK: - Error classification (DESIGN.md §5.5)
+
+    /// Classifies a `didStopWithError` callback into `CaptureEndReason` from the
+    /// `SCStreamError` code alone. Matching on `localizedDescription` is not an option:
+    /// it is localized, so any keyword rule is both blind in Japanese and prone to calling
+    /// a real failure a normal ending — which would end a recording with no message at all.
+    ///
+    /// Only codes that mean "the capture was ended, not broken" map to `.sourceEnded`;
+    /// every other code, and every other error domain, becomes `.failed` carrying the raw
+    /// domain/code so the cause survives into the UI (§5.5).
     private static func classifyStopReason(_ error: Error) -> CaptureEndReason {
         let nsError = error as NSError
-        let signal = "\(nsError.domain)#\(nsError.code) \(nsError.localizedDescription)".lowercased()
-        let sourceEndedKeywords = [
-            "userstopped", "user stopped", "window", "display", "source",
-            "no longer valid", "nolongervalid",
-        ]
-        if sourceEndedKeywords.contains(where: signal.contains) {
+        if nsError.domain == SCStreamError.errorDomain,
+           let code = SCStreamError.Code(rawValue: nsError.code),
+           code == .userStopped {
             return .sourceEnded
         }
-        return .failed(message: "\(nsError.domain)#\(nsError.code): \(nsError.localizedDescription)")
+        return .failed(message: describe(nsError))
+    }
+
+    /// Why `SCShareableContent` refused to enumerate. ScreenCaptureKit reports a missing
+    /// screen-recording grant as `SCStreamError.userDeclined`; everything else is passed
+    /// through verbatim rather than being presented to the user as a permission problem.
+    private static func classifyEnumerationFailure(_ error: Error) -> CaptureUnavailableReason {
+        let nsError = error as NSError
+        if nsError.domain == SCStreamError.errorDomain,
+           let code = SCStreamError.Code(rawValue: nsError.code),
+           code == .userDeclined {
+            return .permissionDenied
+        }
+        return .failed(message: describe(nsError))
+    }
+
+    private static func describe(_ error: NSError) -> String {
+        "\(error.domain)#\(error.code): \(error.localizedDescription)"
     }
 }
 

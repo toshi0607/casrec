@@ -1,11 +1,21 @@
+import AppKit
 import SwiftUI
 
 struct MainView: View {
+    /// Deep link to System Settings › Privacy & Security › Screen Recording (§5.5).
+    private static let screenRecordingSettingsURL = URL(
+        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+    )
+
     let session: any RecordingSessionControlling
     let captureService: any CaptureServicing
 
     @State private var currentState: RecordingState = .idle
     @State private var sources: [CaptureSource] = []
+    /// Non-nil while the source list cannot be read — most importantly when screen
+    /// recording has not been granted, which is otherwise indistinguishable from
+    /// "nothing is open to capture" (§5.5).
+    @State private var sourcesUnavailable: CaptureUnavailableReason?
     @State private var selectedSourceId: String?
 
     @State private var settings = RecordingSettings.default
@@ -29,6 +39,18 @@ struct MainView: View {
             return true
         }
         return false
+    }
+
+    /// Enumerating sources screenshots every window every two seconds. During a recording
+    /// that competes with the capture itself for the GPU for hours on end, so polling is
+    /// suspended for the duration and resumed when the session returns to idle (R5).
+    var isPollingSources: Bool {
+        switch currentState {
+        case .recording, .finishing:
+            return false
+        case .idle, .preparing, .failed:
+            return true
+        }
     }
 
     /// Only the sources matching the current mode are offered, so the selection must be
@@ -75,13 +97,18 @@ struct MainView: View {
         .task {
             await observeState()
         }
-        .task {
+        .task(id: isPollingSources) {
+            guard isPollingSources else { return }
             await observeSources()
         }
     }
 
     private var sourceSelectionSection: some View {
         VStack(alignment: .leading, spacing: 12) {
+            if let reason = sourcesUnavailable {
+                sourcesUnavailableBanner(reason: reason)
+            }
+
             HStack(spacing: 16) {
                 Text("Mode")
                     .font(.caption)
@@ -107,6 +134,45 @@ struct MainView: View {
                 selectedSourceId: $selectedSourceId
             )
         }
+    }
+
+    /// An empty picker is ambiguous — nothing open, or nothing allowed? — so the reason is
+    /// stated, and the permission case gets the one action that resolves it (§5.5).
+    @ViewBuilder
+    private func sourcesUnavailableBanner(reason: CaptureUnavailableReason) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.orange)
+                Text(reason == .permissionDenied ? "Screen Recording Not Allowed" : "Sources Unavailable")
+                    .fontWeight(.semibold)
+            }
+
+            switch reason {
+            case .permissionDenied:
+                Text("システム設定の「プライバシーとセキュリティ > 画面収録」で CasRec を許可してください。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                if let url = Self.screenRecordingSettingsURL {
+                    Button("Open System Settings") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+
+                Text("許可した後は、CasRec を再起動すると録画できるようになります。")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            case .failed(let message):
+                Text(message)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color.orange.opacity(0.1))
+        .cornerRadius(8)
     }
 
     private var audioSettingsSection: some View {
@@ -294,8 +360,15 @@ struct MainView: View {
 
     private func observeSources() async {
         let stream = captureService.observeSources()
-        for await sourcesUpdate in stream {
-            sources = sourcesUpdate
+        for await update in stream {
+            switch update {
+            case .sources(let list):
+                sources = list
+                sourcesUnavailable = nil
+            case .unavailable(let reason):
+                sources = []
+                sourcesUnavailable = reason
+            }
             syncSelection()
         }
     }

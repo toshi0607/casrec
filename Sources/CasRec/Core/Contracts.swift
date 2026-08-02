@@ -120,6 +120,23 @@ enum CaptureEndReason: Sendable, Equatable {
     case failed(message: String)
 }
 
+/// Why the capture sources could not be enumerated. Carried instead of an empty list so
+/// the UI can tell "nothing to capture" apart from "not allowed to look" (§5.5).
+enum CaptureUnavailableReason: Sendable, Equatable {
+    /// Screen recording has not been granted in System Settings. The UI points the user
+    /// there and tells them a restart is needed afterwards (§5.5, §8).
+    case permissionDenied
+    /// Enumeration failed for some other reason. Polling continues, so this can clear on
+    /// its own; the message is shown verbatim rather than guessed at.
+    case failed(message: String)
+}
+
+/// One poll of the source list: what is available to capture, or why nothing is.
+enum CaptureSourcesUpdate: Sendable {
+    case sources([CaptureSource])
+    case unavailable(CaptureUnavailableReason)
+}
+
 /// Owns `SCShareableContent` enumeration, `SCContentFilter` construction, and
 /// `SCStream` start/stop/error relay. The UI layer is decoupled from this via
 /// `AsyncStream`, per §4.
@@ -128,8 +145,9 @@ enum CaptureEndReason: Sendable, Equatable {
 /// existential and calls it from detached tasks, which the compiler rejects for a
 /// non-`Sendable` `any` type.
 protocol CaptureServicing: Sendable {
-    /// Available displays and windows, refreshed periodically with thumbnails.
-    func observeSources() -> AsyncStream<[CaptureSource]>
+    /// Available displays and windows, refreshed periodically with thumbnails — or the
+    /// reason the list could not be read, which the UI must surface (§5.5).
+    func observeSources() -> AsyncStream<CaptureSourcesUpdate>
 
     /// Builds the content filter for `source` (§5.2), starts an `SCStream` configured
     /// per `settings` (§5.1), and relays samples to `sink` until the stream ends.

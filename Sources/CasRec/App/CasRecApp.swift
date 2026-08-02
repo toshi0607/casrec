@@ -5,8 +5,11 @@ import SwiftUI
 struct CasRecApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
+    /// A single `Window`, not a `WindowGroup`: the app is one recording session with one
+    /// set of controls, and ⌘N opening a second copy of it would let two views drive the
+    /// same session (§7).
     var body: some Scene {
-        WindowGroup {
+        Window("CasRec", id: "main") {
             MainView(
                 session: appDelegate.session,
                 captureService: appDelegate.captureService
@@ -43,9 +46,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// A recording outlives its window (§5.4).
+    /// A recording outlives its window (§5.4) — but only a recording. With nothing in
+    /// flight, closing the window is the user asking the app to go away, and staying alive
+    /// as an invisible process would just be a leak they cannot see.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        false
+        switch currentState {
+        case .preparing, .recording, .finishing:
+            return false
+        case .idle, .failed:
+            return true
+        }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

@@ -41,8 +41,9 @@ final class SessionGuards: @unchecked Sendable {
 
     /// `beginActivity` hands back an opaque, non-`Sendable` token. Wrapping it makes it
     /// storable inside the `Mutex`; the wrapper is sound because the token is never
-    /// inspected or mutated — it is only handed straight back to `endActivity`, always
-    /// from inside the lock.
+    /// inspected or mutated — it is only handed straight back to `endActivity`. `stop()`
+    /// claims it and clears it in one `withLock`, so however many callers race, exactly one
+    /// of them ends up with the token and the activity is never ended twice.
     private struct ActivityToken: @unchecked Sendable {
         let value: any NSObjectProtocol
     }
@@ -57,9 +58,12 @@ final class SessionGuards: @unchecked Sendable {
 
     /// Disk-space updates for the current recording. Each call returns an independent
     /// stream; `stop()` finishes them all, so a consumer's `for await` loop always ends.
+    ///
+    /// Only the newest reading is buffered — free space is a level, not a series of
+    /// events, and a stale one is of no use to anybody.
     func observeDiskSpace() -> AsyncStream<DiskSpaceStatus> {
         let id = UUID()
-        let (stream, continuation) = AsyncStream<DiskSpaceStatus>.makeStream()
+        let (stream, continuation) = AsyncStream<DiskSpaceStatus>.makeStream(bufferingPolicy: .bufferingNewest(1))
         state.withLock { $0.observers[id] = continuation }
         continuation.onTermination = { [weak self] _ in
             self?.state.withLock { _ = $0.observers.removeValue(forKey: id) }

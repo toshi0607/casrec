@@ -32,6 +32,11 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
     /// (§5.3). The likeliest cause is the target window being minimised (§9).
     static let stallThreshold: TimeInterval = 10
 
+    /// How long `finalize` waits for the capture stream to stop before writing the file out
+    /// regardless. `stopCapture()` normally returns in milliseconds; the bound exists so a
+    /// wedged `SCStream` cannot hold `finishWriting` hostage (§4).
+    static let stopCaptureTimeout: Duration = .seconds(5)
+
     private static let log = Logger(subsystem: "dev.toshi0607.casrec", category: "session")
 
     /// The state machine's position, without the per-tick payload of `RecordingState`.
@@ -86,9 +91,13 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
     /// Each call returns an independent stream, and every new subscriber immediately
     /// receives the current state — so a view that re-subscribes (or subscribes late)
     /// never sits on a blank screen waiting for the next tick.
+    ///
+    /// Only the newest state is buffered: this is a state feed, not an event log, and a
+    /// consumer that falls behind wants where the session is now, not a queue of ticks it
+    /// has to walk through to find out.
     func observeState() -> AsyncStream<RecordingState> {
         let id = UUID()
-        let (stream, continuation) = AsyncStream<RecordingState>.makeStream()
+        let (stream, continuation) = AsyncStream<RecordingState>.makeStream(bufferingPolicy: .bufferingNewest(1))
         let current = state.withLock { current -> RecordingState in
             current.observers[id] = continuation
             return current.lastState
@@ -227,9 +236,12 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
         let claimed = state.withLock { current -> (AssetWriterCoordinator?, RecordingArtifacts?)? in
             guard case .recording = current.phase else { return nil }
             current.phase = .finishing
-            // Safe to cancel: the ticker never calls finalize, so this is never self-
-            // cancellation. The capture and disk observers are left alone precisely
-            // because they *can* be the caller; both break out on their own.
+            // This can be self-cancellation: the ticker finalizes the session itself when
+            // it sees a latched write failure. Harmless, because everything `finalize`
+            // awaits from here on is cancellation-immune by construction — see
+            // `stopCaptureWithinTimeout`, which exists for exactly this reason. The capture
+            // and disk observers can equally be the caller; they are cancelled at the end
+            // of the teardown instead, where nothing is left to await at all.
             current.ticker?.cancel()
             current.ticker = nil
             return (current.writer, current.artifacts)
@@ -237,7 +249,7 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
         guard let (writer, artifacts) = claimed else { return }
         emit(.finishing)
 
-        await captureService.stopCapture()
+        await stopCaptureWithinTimeout()
         let result = await writer?.finish() ?? .nothingRecorded
         // Only now: finalizing a long recording takes time, and sleeping through it is
         // the failure this whole layer exists to prevent (§5.4).
@@ -251,15 +263,29 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
         case .nothingRecorded:
             artifacts?.discardIfEmpty()
         case .failed:
-            // Leave the .mov and its sidecar in place — that pair is what the repair flow
-            // looks for (§5.5).
-            break
+            // A .mov with fragments in it is kept, sidecar included — that pair is what the
+            // repair flow looks for (§5.5). A failure that produced no bytes at all (an
+            // encoder that never initialised) leaves nothing to repair, only a sidecar that
+            // would masquerade as an unfinalized recording, so that pair goes.
+            artifacts?.discardIfEmpty()
         }
 
-        state.withLock { current in
+        // The session is over; nothing is left for these to observe. Claimed now rather
+        // than at the top of `finalize` because either of them can be the caller, and both
+        // are past their last suspension point by the time control gets here.
+        let observers = state.withLock { current -> [Task<Void, Never>] in
             current.writer = nil
             current.artifacts = nil
             current.startedAt = nil
+            let ended = [current.captureEndedObserver, current.diskObserver].compactMap { $0 }
+            current.captureEndedObserver = nil
+            current.diskObserver = nil
+            return ended
+        }
+        // Outside the lock: cancelling runs the streams' termination handlers inline, and
+        // those take locks of their own (`SessionGuards`').
+        for observer in observers {
+            observer.cancel()
         }
 
         if let message = Self.failureMessage(reason: reason, result: result) {
@@ -271,6 +297,43 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
             }
             Self.log.info("session finished cleanly")
             emit(.idle)
+        }
+    }
+
+    /// Stops the capture, but never waits longer than `stopCaptureTimeout`.
+    ///
+    /// The §4 invariant is that every exit from `recording` reaches `finishWriting`, and an
+    /// unbounded wait here is the one thing that can break it: a stream that never returns
+    /// would leave the session in `finishing` forever, taking ⌘Q down with it (§5.4).
+    /// Giving up is safe — `AssetWriterCoordinator.finish()` marks itself finishing before
+    /// closing the file, so a sample from a still-running stream is discarded, not appended.
+    ///
+    /// The race runs inside its own task on purpose: `finalize` is reachable from a task
+    /// that has just been cancelled (the ticker cancels itself on its way in), and
+    /// `AsyncStream` iteration ends immediately under cancellation, which would collapse the
+    /// timeout to zero.
+    private func stopCaptureWithinTimeout() async {
+        let stoppedInTime = await Task { [captureService] () -> Bool in
+            let (outcome, continuation) = AsyncStream<Bool>.makeStream(bufferingPolicy: .bufferingNewest(1))
+            Task {
+                await captureService.stopCapture()
+                continuation.yield(true)
+            }
+            let deadline = Task {
+                try? await Task.sleep(for: Self.stopCaptureTimeout)
+                continuation.yield(false)
+            }
+            var stopped = false
+            for await value in outcome {
+                stopped = value
+                break
+            }
+            deadline.cancel()
+            return stopped
+        }.value
+
+        if !stoppedInTime {
+            Self.log.error("capture did not stop within the timeout; finalizing the file anyway")
         }
     }
 

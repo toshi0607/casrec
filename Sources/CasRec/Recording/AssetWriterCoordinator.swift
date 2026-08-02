@@ -229,7 +229,7 @@ final class AssetWriterCoordinator: SampleConsuming, @unchecked Sendable {
         }
         if !videoInput.append(sampleBuffer) {
             droppedFrames += 1
-            recordWriterFailure()
+            latchIfWriterFailed()
         }
     }
 
@@ -289,12 +289,33 @@ final class AssetWriterCoordinator: SampleConsuming, @unchecked Sendable {
         guard CMTimeCompare(presentationTime, sessionStartTime) >= 0 else { return }
         guard CMSampleBufferDataIsReady(sampleBuffer), input.isReadyForMoreMediaData else { return }
         if !input.append(sampleBuffer) {
-            recordWriterFailure()
+            // Deliberately not counted as a dropped frame: `droppedFrames` is the video
+            // metric the HUD shows. A rejected audio buffer costs a few milliseconds of
+            // sound and must never cost the picture, so unless the writer itself has
+            // failed — which `latchIfWriterFailed` checks — the recording carries on.
+            latchIfWriterFailed()
         }
     }
 
     // MARK: - Helpers (queue-confined)
 
+    /// Latches a failure only if the writer has genuinely entered its terminal state.
+    ///
+    /// `AVAssetWriterInput.append` returns false for reasons that are not fatal — a sample
+    /// the input refuses, a moment when it is not ready — and treating every one of them as
+    /// terminal would end an hours-long recording over a single frame, because
+    /// `RecordingSession`'s ticker stops the session within a second of `writeFailure`
+    /// being set. `AVAssetWriter.status` is the only signal that means "nothing more can
+    /// ever be written".
+    private func latchIfWriterFailed() {
+        guard writer?.status == .failed else { return }
+        recordWriterFailure()
+    }
+
+    /// Records a terminal write failure — the latch `RecordingSession` polls to end the
+    /// session. Only call this once the failure is known to be terminal: directly from the
+    /// setup path, where a step that fails means no media can be written at all, and
+    /// otherwise through `latchIfWriterFailed`.
     private func recordWriterFailure(message: String? = nil) {
         guard writeFailure == nil else { return }
         let resolved = message

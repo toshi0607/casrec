@@ -122,13 +122,13 @@ final class MockRecordingSession: RecordingSessionControlling, @unchecked Sendab
 
 /// Serves a fixed source list and captures nothing. Stateless, hence genuinely `Sendable`.
 final class MockCaptureService: CaptureServicing {
-    func observeSources() -> AsyncStream<[CaptureSource]> {
+    func observeSources() -> AsyncStream<CaptureSourcesUpdate> {
         AsyncStream { continuation in
-            continuation.yield(mockSourcesList)
+            continuation.yield(.sources(mockSourcesList))
             let task = Task {
                 while !Task.isCancelled {
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
-                    continuation.yield(mockSourcesList)
+                    continuation.yield(.sources(mockSourcesList))
                 }
             }
             continuation.onTermination = { _ in

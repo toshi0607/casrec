@@ -61,6 +61,8 @@ DESIGN.md §11 が主台帳。実装開始時点の追加分:
 
 Wave 2残課題(reviewerへの申し送り、既知): (1) failed時にアラートとインラインバナーが二重表示(UI設計判断待ち) (2) Mocks.swiftが参照ゼロのデッドコード(#if DEBUG化候補) (3) ⌘Q確認は録画開始直後の1ホップ分すり抜け窓あり(実害極小と判断)。**N4: L7の変更によりlast-window-close判定も同じ遅延ミラーに依存するようになった(二段構えで実害極小)** (4) 実行時挙動(⌘Qダイアログ・diskWarningバナー・スリープ抑止)は未検証 → 実機検証へ
 
+Phase 2持ち越し追加(実機で発見): N9 セクション見出しとPickerラベルの二重表示(Mode/Codec/Resolution/FPS)— .labelsHidden() 等で整理
+
 Phase 2持ち越し追加(reviewer 2巡目 Low): N5 音声append継続失敗が完全に不可視(§5.6ログ基盤か専用カウンタで可視化) / N6 idleフレーム区間ではterminal失敗を検知できない(currentWriteFailureがwriter.statusも見るように) / N7 stopCaptureタイムアウトのdeadlineタスクにisCancelledガード(現状無害だが構造変更で顕在化) / N8 CaptureService.endedContinuationの終端後クリア / failureMessageの「残っています」不整合はdiscardIfEmpty()のBool返し化で1分岐修正可(reviewerの見積もり)
 
 Phase 2への持ち越し(opus実測による発見): audio input が有効なのにサンプル0件だと fragmented .mov の復旧可能プレフィックスが消える(`ftyp wide mdat(0)`)。マイク拒否シナリオに加え、**既定設定(captureAppAudio=true)+対象アプリが完全無音のケースでも成立する**(reviewer L10)。kill -9 試験のマトリクスに「audio starvation(mic拒否/無音アプリの両方)」を追加すること。飢餓inputの `markAsFinished()` はR3/R8とR6のトレードオフでプロダクト判断が要るため未実装。
@@ -76,6 +78,7 @@ Phase 2への持ち越し(opus実測による発見): audio input が有効な�
 - 記録(L9): stall検知・ディスク監視・R10分類・マイクトラックはDESIGN.md §12ではPhase 2項目だが前倒し実装済み。**前倒し分の完了条件(2時間録画・kill -9試験)はPhase 2で消化する**
 
 ### 実機検証(要ユーザー: TCC許可ダイアログ)
+- [x] 画面収録権限フロー: 許可→再起動→ソース一覧+サムネイル表示 — 2026-08-03 ユーザー実機で確認(スクリーンショット証跡)
 - [ ] DESIGN.md Phase 1完了条件: 30分録画・A/V同期・通知音非混入・4状態(背面/別Space/フルスクリーン前面/Stage Manager)でフレーム更新継続
 - [ ] **色が正しいこと**(N1: 420v+colorMatrix変更の確認。BT.601/709取り違えの検出)
 - [ ] **録画中に⌘W→Dockクリックでウィンドウが戻ること**(N3: 単一Windowシーンの復帰挙動は静的判定不能。戻らない場合はapplicationShouldHandleReopen+openWindow(id:)またはclose→orderOut化が必要。§5.4「close=hide」は未実装)

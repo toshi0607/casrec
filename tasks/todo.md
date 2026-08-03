@@ -30,7 +30,7 @@ DESIGN.md §11 が主台帳。実装開始時点の追加分:
 |------------|--------|----------|
 | 設計前提API全件(desktopIndependentWindow / movieFragmentInterval / capturesAudio / captureMicrophone / SCStreamOutputType.microphone / queueDepth / beginActivity)は実在 | VERIFIED | scratchpad probe.swift、SDK 26.5 で typecheck 全通過(2026-08-02) |
 | CLTビルドの実行ファイル+手動.appバンドル(ad-hoc署名)で SwiftUI GUIアプリが起動する | VERIFIED | scratchpad MiniProbe.app: 起動→SwiftUIライフサイクル実行→自己終了 exit 0(2026-08-02)。swiftc直は -parse-as-library 必要、SwiftPMでは不要 |
-| ad-hoc署名の.appでも画面収録TCCが正常に許可・維持される | UNVERIFIED-ACCEPTED (2026-08-02) | TCCダイアログ承認はユーザー操作のため自動検証不能。実機検証タスクの初手で確認する。緩和策: 摩擦(再ビルド毎の再許可)が出たら自己署名証明書に切替(DESIGN.md §8)。どの署名方式でもTCC自体は必要なためアーキテクチャへの影響なし |
+| ad-hoc署名の.appでも画面収録TCCが正常に許可・維持される | VERIFIED-部分反証で決着 (2026-08-03) | 実測: 許可自体は可能だが**再ビルド毎にcdhash変化で権限が無効化**(ユーザー報告「許可しても拒否しても毎回ダイアログ」)。緩和策どおり自己署名証明書 CasRec Dev へ切替(bd71ea9、Makefile既定)+tccutil resetで解決。以後のコード変更リビルド(CFBundleVersion変更時・PR #3検証時の計2回)で権限ダイアログ再表示なしを確認 → tasks/lessons.md に手順記録済み |
 
 ## Waves
 
@@ -108,3 +108,24 @@ Phase 2への持ち越し(opus実測による発見): audio input が有効な�
 - 2026-08-02: Wave 0完了・検証済(sonnet)。Contracts.swiftにCaptureEndReasonが追加された(didStopWithErrorの中継チャネル。R10対応に必要と判断、妥当)。CaptureSourceは非Sendable(SCK型内包)— Wave 1a/1cは@MainActor寄せで対処する方針をプロンプトに明記済み。
 - 2026-08-02: Wave 1並行起動(worktree分離、background): 1a Capture=sonnet / 1b Recording=opus / 1c UI=haiku。コミットはオーケストレーターが回収時に実施。
 - 2026-08-02: Wave 1c(UI、haiku)回収。§7準拠・ビルド通過。**Wave 2統合課題**: (1) failed→idleへ戻す遷移がContractsに無くUIのリセットが機能しない → RecordingSession.start()をfailedからも受理する形に調整 (2) モード切替時にselectedSourceIdをリセット(フィルタ外ソースで録画開始できてしまう) (3) `nonisolated(unsafe)`/`@unchecked Sendable`ラッパー多用の整理(Contractsプロトコルの@MainActor化かCaptureSourceのSendable化を1a/1b実装を見て判断) (4) Mocks.swiftの#if DEBUG化検討。#Previewは未実装(Xcode不在で実害なし、不問)。
+
+### PR #3 レビュー+実機検証(矩形録画、外部エージェント実装、2026-08-03)
+
+静的レビュー(オーケストレーター実施):
+- [x] 指示文(rect-capture-brief.md)の要件8項目すべて充足を diff で確認。禁止事項違反なし(tasks/未編集・Recording層無変更・空catch/コメントアウト無し・conventional commit)
+- [x] `swift build` 警告ゼロ / `make test` 22件(既存18+新規4)全パス / `make bundle` exit 0・CasRec Dev署名 — すべて自分の環境で再実行して確認
+- [x] 新規テストの検出力を変異で確認: contentRect()のY軸スケールをX軸に差し替え→「origin and scale preserved」テストが期待どおり失敗(y 40→60)。復元済み
+- [x] ID形式(`window-N`/`display-N`)によりモード切替で必ずselectedSourceIdが変わりonChange→clearCrop()が発火することを確認。仮に残ってもmakeConfigurationのinvalidCrop throwで防御される二重構え
+
+実機検証(sourceRect挙動 — §11の未検証項目を消化。§11のVERIFIED化はc652ec2で反映済み、リサイズ時挙動は別行UNVERIFIEDとしてPhase 2へ):
+- [x] **座標系VERIFIED**: 4象限色分けテストページ(Safari 934×841pt)で境界跨ぎcrop(444×552pt)を録画。出力888×1104pxの緑→黄境界がy=632pxに出現し、選択位置からの期待値(~620px、目測誤差±10px)と一致。**原点=左上・単位=ポイント・スケール(pointPixelScale)すべて正しい。WYSIWYG成立**
+- [x] 出力解像度: バッジ表示(36×528 / 888×1104)とmdlsの実ピクセルが両録画とも完全一致。サイドカー掃除・音声2chも正常
+- [x] 全体録画の互換(crop=nil): 1868×1682で内容正常・黒帯なし。クリア→全体録画の遷移もUIで確認
+- [x] リビルド後のTCC維持: 自己署名証明書によりコード変更後の再ビルドでも権限ダイアログ再表示なし(3録画すべて即開始)
+- 記録: 検証録画3本が ~/Movies/CasRec/ に残存(Safari-20260803-185433/185841/190134.mov、計~9MB)。不要なら削除可
+- **異常1件(製品コード起因ではないと判断)**: UI自動化の合成ドラッグイベント(left_click_drag)がDragGestureに正しく解釈されず異常選択(36×528)が確定された1回のみ、出力下端45pxが黒(=範囲外rectをSCKが黒埋めする挙動)。通常のドラッグ操作(実験B)では表示・録画・境界位置が完全一致し再現せず。クランプ(clampedContentRect)は録画開始時に毎回通る設計のため、実操作での発生経路は未発見。ユーザー実利用で下端黒帯を見かけたら要報告
+
+軽微所見(マージブロッカーではない、Phase 2候補):
+- ~~N11~~ / ~~N12~~: レビューコメント投稿後、追いコミットc652ec2(バッジのスケールを幅高さ独立で計算+CGSize版outputSize、部分はみ出しclampテスト追加)で対応済み。マージ後コード(ad4ba3a相当)で警告ゼロ・`make test` 23件全パス再確認済み(2026-08-03)
+- N13: シート再オープン時に既存選択を引き継がない(毎回まっさら)
+- N14: バッジのピクセルサイズはscalePercent=100基準(領域サイズ表示としては正しい)

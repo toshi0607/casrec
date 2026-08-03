@@ -117,7 +117,7 @@ Phase 2への持ち越し(opus実測による発見): audio input が有効な�
 - [x] 新規テストの検出力を変異で確認: contentRect()のY軸スケールをX軸に差し替え→「origin and scale preserved」テストが期待どおり失敗(y 40→60)。復元済み
 - [x] ID形式(`window-N`/`display-N`)によりモード切替で必ずselectedSourceIdが変わりonChange→clearCrop()が発火することを確認。仮に残ってもmakeConfigurationのinvalidCrop throwで防御される二重構え
 
-実機検証(sourceRect挙動 — §11の未検証項目を消化。マージ後にDESIGN.md §11の該当行をVERIFIEDへ更新すること):
+実機検証(sourceRect挙動 — §11の未検証項目を消化。§11のVERIFIED化はc652ec2で反映済み、リサイズ時挙動は別行UNVERIFIEDとしてPhase 2へ):
 - [x] **座標系VERIFIED**: 4象限色分けテストページ(Safari 934×841pt)で境界跨ぎcrop(444×552pt)を録画。出力888×1104pxの緑→黄境界がy=632pxに出現し、選択位置からの期待値(~620px、目測誤差±10px)と一致。**原点=左上・単位=ポイント・スケール(pointPixelScale)すべて正しい。WYSIWYG成立**
 - [x] 出力解像度: バッジ表示(36×528 / 888×1104)とmdlsの実ピクセルが両録画とも完全一致。サイドカー掃除・音声2chも正常
 - [x] 全体録画の互換(crop=nil): 1868×1682で内容正常・黒帯なし。クリア→全体録画の遷移もUIで確認
@@ -126,7 +126,6 @@ Phase 2への持ち越し(opus実測による発見): audio input が有効な�
 - **異常1件(製品コード起因ではないと判断)**: UI自動化の合成ドラッグイベント(left_click_drag)がDragGestureに正しく解釈されず異常選択(36×528)が確定された1回のみ、出力下端45pxが黒(=範囲外rectをSCKが黒埋めする挙動)。通常のドラッグ操作(実験B)では表示・録画・境界位置が完全一致し再現せず。クランプ(clampedContentRect)は録画開始時に毎回通る設計のため、実操作での発生経路は未発見。ユーザー実利用で下端黒帯を見かけたら要報告
 
 軽微所見(マージブロッカーではない、Phase 2候補):
-- N11: CropSelectionSheetのselectedPixelSizeが幅のみからスケール復元(偶数丸めで±2px級の表示誤差の可能性。録画には無影響)
-- N12: clampedContentRect単体の「部分はみ出し→交差部分が返る」直接テストなし(全域クランプは間接カバー済み)
+- ~~N11~~ / ~~N12~~: レビューコメント投稿後、追いコミットc652ec2(バッジのスケールを幅高さ独立で計算+CGSize版outputSize、部分はみ出しclampテスト追加)で対応済み。マージ後コード(ad4ba3a相当)で警告ゼロ・`make test` 23件全パス再確認済み(2026-08-03)
 - N13: シート再オープン時に既存選択を引き継がない(毎回まっさら)
 - N14: バッジのピクセルサイズはscalePercent=100基準(領域サイズ表示としては正しい)

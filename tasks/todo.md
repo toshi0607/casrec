@@ -150,7 +150,7 @@ Phase 2への持ち越し(opus実測による発見): audio input が有効な�
 
 ### PR #9 レビュー+実機確認(圧縮・GIF・修復+ジョブキュー、外部エージェント実装、2026-08-03)
 
-- [x] 静的レビュー: 要件11項目対応・原本非破壊(-nの二重ガード)・shell不使用の引数配列・純粋関数化+テスト。**Medium指摘1件**: FfmpegRunnerのstderr読み取りがwaitUntilExit後でパイプバッファ64KB超時にデッドロック(長尺GIF変換で現実に発生しうる)→ PRコメントで修正案提示(read先行+-nostats)、追いコミット待ち
+- [x] 静的レビュー: 要件11項目対応・原本非破壊(-nの二重ガード)・shell不使用の引数配列・純粋関数化+テスト。**Medium指摘1件**: FfmpegRunnerのstderr読み取りがwaitUntilExit後でパイプバッファ64KB超時にデッドロック(長尺GIF変換で現実に発生しうる)→ 追いコミット6f3667cで解決(read先行+quietArguments二重対策、テスト更新)。修正後バイナリで修復再実行し回帰なし+連番回避 -recovered-2.mov の実機確認も完了(2026-08-03)
 - [x] 再検証: 警告ゼロ / `make test` 41件(35+新規6)全パス / bundle成功 / CI緑
 - [x] 実機確認: GIF変換(インジケータ→完了→自動反映、幅640出力正常)/ 修復(実kill -9由来の未finalizeファイルで-recovered.mov生成、原本・サイドカー非破壊、再生可能)/ ffmpeg不在時(バナー+GIF・修復disabled+圧縮有効。バイナリ一時退避で確認、復元済み)/ 未finalizeバッジ初の実機表示
 - [x] **kill -9試験の一部前倒し消化(Phase 2)**: 映像のみ(App Audioオフ)の録画を15秒でkill -9 → 生のfragmented .movが直接再生可能(20.1秒・1840×872、フレーム抽出OK)= R6クラッシュ耐性の実証。audio starvationケース(音声有効・無音)のkill -9は未消化

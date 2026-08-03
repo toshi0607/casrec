@@ -90,6 +90,13 @@ Phase 2への持ち越し(opus実測による発見): audio input が有効な�
 
 **Phase 1 完了(2026-08-03)。** 次期の最優先実装はユーザーの本命ニーズ「**ウィンドウ内の動画領域だけを矩形で切り出して録画**」(元Phase 3の矩形領域を繰り上げ。ウィンドウフィルタ+sourceRectならアプリ音声分離を維持したまま領域切り出しが可能 — ディスプレイフィルタ方式より優位。設計改訂は次PRで)
 
+### 人間レビュー対応(PR #2、2026-08-03)
+
+指摘3件(Request changes相当):
+- [ ] (1) Medium: writer失敗検知の抜け — append経由でしかラッチせず、idle/無音中の非同期 .failed を ticker が検出できない(reviewerエージェントのN6と同根、Lowから格上げ)。stats/currentWriteFailure() で writer.status == .failed を毎回確認し writer.error を返す
+- [x] (2) 要判断: audio starvation のクラッシュ耐性 — Phase 2持ち越しを維持し、DESIGN.md §5.3 に「条件付き」であることを明示(本コミット)。コードコメントの保証表現の修正は(1)と併せて実施
+- [ ] (3) Low: テストターゲット追加 — 停止経路の競合(manual/streamFailure/diskCritical)、failed→idle、空ファイル+サイドカー削除条件、finishWriting一回保証、(1)の回帰テスト。CLT環境でのswift test可否(XCTest無し、Swift Testing同梱)は要プローブ
+
 ## Notes(委譲ログ・逸脱記録)
 
 - 2026-08-02: Xcode不在が判明(CLTのみ、しかも13.3/Swift 5.8)。DESIGN.mdの「Xcodeプロジェクト」前提を「SwiftPM + Makefileバンドル」に変更(§8/§10)。Xcode導入時はPackage.swiftを直接開けるため移行容易。

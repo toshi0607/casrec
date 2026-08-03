@@ -19,6 +19,9 @@ struct MainView: View {
     @State private var selectedSourceId: String?
 
     @State private var settings = RecordingSettings.default
+    @State private var outputDirectoryWarning: String?
+    @State private var libraryRefreshToken = 0
+    @State private var wasRecording = false
     @State private var captureMode: CaptureSourceKind = .window
     @State private var cropPreview: CapturePreview?
     @State private var cropPreviewSourceID: String?
@@ -27,6 +30,8 @@ struct MainView: View {
 
     @State private var errorMessage: String?
     @State private var showingError = false
+
+    private let outputDirectoryPreferences = OutputDirectoryPreferences()
 
     var isRecording: Bool {
         if case .recording = currentState {
@@ -68,6 +73,43 @@ struct MainView: View {
     }
 
     var body: some View {
+        TabView {
+            recordingTab
+                .tabItem {
+                    Label("録画", systemImage: "record.circle")
+                }
+
+            LibraryView(
+                directory: settings.destinationDirectory,
+                refreshToken: libraryRefreshToken,
+                allowsDeletion: !isRecording && !isTransitioning
+            )
+            .tabItem {
+                Label("ライブラリ", systemImage: "film.stack")
+            }
+        }
+        .frame(minWidth: 500, minHeight: 400)
+        .task {
+            refreshOutputDirectory()
+            await observeState()
+        }
+        .task(id: isPollingSources) {
+            guard isPollingSources else { return }
+            await observeSources()
+        }
+        .sheet(item: $cropPreview) { preview in
+            CropSelectionSheet(
+                preview: preview,
+                initialContentRect: cropPreviewSourceID == selectedSourceId ? settings.sourceCropRect : nil
+            ) { rect, pixelSize in
+                guard cropPreviewSourceID == selectedSourceId else { return }
+                settings.sourceCropRect = rect
+                cropPixelSize = pixelSize
+            }
+        }
+    }
+
+    private var recordingTab: some View {
         VStack(spacing: 16) {
             ScrollView {
                 VStack(spacing: 16) {
@@ -90,7 +132,6 @@ struct MainView: View {
                     .padding(.bottom, 8)
             }
         }
-        .frame(minWidth: 500, minHeight: 400)
         .padding(16)
         .alert("Recording Error", isPresented: $showingError) {
             Button("OK") {
@@ -98,23 +139,6 @@ struct MainView: View {
             }
         } message: {
             Text(errorMessage ?? "An unknown error occurred")
-        }
-        .task {
-            await observeState()
-        }
-        .task(id: isPollingSources) {
-            guard isPollingSources else { return }
-            await observeSources()
-        }
-        .sheet(item: $cropPreview) { preview in
-            CropSelectionSheet(
-                preview: preview,
-                initialContentRect: cropPreviewSourceID == selectedSourceId ? settings.sourceCropRect : nil
-            ) { rect, pixelSize in
-                guard cropPreviewSourceID == selectedSourceId else { return }
-                settings.sourceCropRect = rect
-                cropPixelSize = pixelSize
-            }
         }
     }
 
@@ -306,6 +330,24 @@ struct MainView: View {
                     .font(.caption)
                     .lineLimit(1)
                 Spacer()
+                Button("変更…") {
+                    chooseOutputDirectory()
+                }
+                .disabled(isRecording || isTransitioning)
+            }
+
+            if let outputDirectoryWarning {
+                HStack(spacing: 8) {
+                    Image(systemName: "externaldrive.fill.badge.exclamationmark")
+                        .foregroundColor(.yellow)
+                    Text(outputDirectoryWarning)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+                .padding(8)
+                .background(Color.yellow.opacity(0.1))
+                .cornerRadius(6)
             }
         }
     }
@@ -377,10 +419,8 @@ struct MainView: View {
                 }
             } else {
                 Button(action: {
-                    guard let source = selectedSource else { return }
-                    let capturedSettings = settings
                     Task {
-                        await session.start(source: source, settings: capturedSettings)
+                        await startRecording()
                     }
                 }) {
                     HStack {
@@ -402,6 +442,12 @@ struct MainView: View {
         let stream = session.observeState()
         for await state in stream {
             currentState = state
+            if case .recording = state {
+                wasRecording = true
+            } else if case .idle = state, wasRecording {
+                wasRecording = false
+                libraryRefreshToken += 1
+            }
             if case .failed(let message) = state {
                 errorMessage = message
                 showingError = true
@@ -451,5 +497,44 @@ struct MainView: View {
         let visible = visibleSources
         guard !visible.contains(where: { $0.id == selectedSourceId }) else { return }
         selectedSourceId = visible.first?.id
+    }
+
+    /// Re-check immediately before starting: a removable destination may have disappeared
+    /// after the app launched or while the user was choosing a source (§7).
+    private func startRecording() async {
+        refreshOutputDirectory()
+        guard outputDirectoryPreferences.isUsable(settings.destinationDirectory) else {
+            errorMessage = "保存先を利用できません。保存先を変更してから録画を開始してください。"
+            showingError = true
+            return
+        }
+        guard let source = selectedSource else { return }
+        await session.start(source: source, settings: settings)
+    }
+
+    private func refreshOutputDirectory() {
+        let resolution = outputDirectoryPreferences.load()
+        settings.destinationDirectory = resolution.directory
+        outputDirectoryWarning = resolution.didFallback
+            ? "設定されていた保存先を利用できないため、既定の保存先に戻しました。"
+            : nil
+    }
+
+    private func chooseOutputDirectory() {
+        let panel = NSOpenPanel()
+        panel.title = "保存先を選択"
+        panel.prompt = "選択"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = settings.destinationDirectory
+        guard panel.runModal() == .OK, let directory = panel.url else { return }
+        guard outputDirectoryPreferences.save(directory: directory) else {
+            outputDirectoryWarning = "選択した保存先に書き込めません。別のフォルダを選択してください。"
+            return
+        }
+        settings.destinationDirectory = directory
+        outputDirectoryWarning = nil
+        libraryRefreshToken += 1
     }
 }

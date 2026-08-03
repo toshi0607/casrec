@@ -30,7 +30,7 @@ DESIGN.md §11 が主台帳。実装開始時点の追加分:
 |------------|--------|----------|
 | 設計前提API全件(desktopIndependentWindow / movieFragmentInterval / capturesAudio / captureMicrophone / SCStreamOutputType.microphone / queueDepth / beginActivity)は実在 | VERIFIED | scratchpad probe.swift、SDK 26.5 で typecheck 全通過(2026-08-02) |
 | CLTビルドの実行ファイル+手動.appバンドル(ad-hoc署名)で SwiftUI GUIアプリが起動する | VERIFIED | scratchpad MiniProbe.app: 起動→SwiftUIライフサイクル実行→自己終了 exit 0(2026-08-02)。swiftc直は -parse-as-library 必要、SwiftPMでは不要 |
-| ad-hoc署名の.appでも画面収録TCCが正常に許可・維持される | UNVERIFIED-ACCEPTED (2026-08-02) | TCCダイアログ承認はユーザー操作のため自動検証不能。実機検証タスクの初手で確認する。緩和策: 摩擦(再ビルド毎の再許可)が出たら自己署名証明書に切替(DESIGN.md §8)。どの署名方式でもTCC自体は必要なためアーキテクチャへの影響なし |
+| ad-hoc署名の.appでも画面収録TCCが正常に許可・維持される | VERIFIED-部分反証で決着 (2026-08-03) | 実測: 許可自体は可能だが**再ビルド毎にcdhash変化で権限が無効化**(ユーザー報告「許可しても拒否しても毎回ダイアログ」)。緩和策どおり自己署名証明書 CasRec Dev へ切替(bd71ea9、Makefile既定)+tccutil resetで解決。以後のコード変更リビルド(CFBundleVersion変更時・PR #3検証時の計2回)で権限ダイアログ再表示なしを確認 → tasks/lessons.md に手順記録済み |
 
 ## Waves
 
@@ -117,7 +117,7 @@ Phase 2への持ち越し(opus実測による発見): audio input が有効な�
 - [x] 新規テストの検出力を変異で確認: contentRect()のY軸スケールをX軸に差し替え→「origin and scale preserved」テストが期待どおり失敗(y 40→60)。復元済み
 - [x] ID形式(`window-N`/`display-N`)によりモード切替で必ずselectedSourceIdが変わりonChange→clearCrop()が発火することを確認。仮に残ってもmakeConfigurationのinvalidCrop throwで防御される二重構え
 
-実機検証(sourceRect挙動 — §11のUNVERIFIED消化):
+実機検証(sourceRect挙動 — §11の未検証項目を消化。マージ後にDESIGN.md §11の該当行をVERIFIEDへ更新すること):
 - [x] **座標系VERIFIED**: 4象限色分けテストページ(Safari 934×841pt)で境界跨ぎcrop(444×552pt)を録画。出力888×1104pxの緑→黄境界がy=632pxに出現し、選択位置からの期待値(~620px、目測誤差±10px)と一致。**原点=左上・単位=ポイント・スケール(pointPixelScale)すべて正しい。WYSIWYG成立**
 - [x] 出力解像度: バッジ表示(36×528 / 888×1104)とmdlsの実ピクセルが両録画とも完全一致。サイドカー掃除・音声2chも正常
 - [x] 全体録画の互換(crop=nil): 1868×1682で内容正常・黒帯なし。クリア→全体録画の遷移もUIで確認

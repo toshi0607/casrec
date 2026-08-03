@@ -169,8 +169,10 @@ private struct FfmpegRunner: Sendable {
             process.standardError = stderr
             process.standardOutput = FileHandle.nullDevice
             try process.run()
-            process.waitUntilExit()
+            // Reading to EOF starts immediately and drains while ffmpeg is still writing.
+            // Waiting first would deadlock a long conversion once stderr fills its pipe.
             let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
             let message = String(data: stderrData, encoding: .utf8) ?? ""
             return (process.terminationStatus, Self.summary(of: message))
         }.value

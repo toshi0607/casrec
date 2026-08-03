@@ -72,9 +72,12 @@ struct PostProcessOutputNamer {
 
 enum FfmpegCommandBuilder {
     static let gifFilter = "fps=10,scale=640:-1:flags=lanczos"
+    /// Keep long conversions from filling diagnostic pipes. `FfmpegRunner` still drains
+    /// stderr while the child is alive so unexpected errors can be reported safely.
+    static let quietArguments = ["-hide_banner", "-loglevel", "error", "-nostats"]
 
     static func paletteGeneration(input: URL, palette: URL) -> [String] {
-        [
+        quietArguments + [
             "-i", input.path(percentEncoded: false),
             "-vf", "\(gifFilter),palettegen",
             "-frames:v", "1",
@@ -83,7 +86,7 @@ enum FfmpegCommandBuilder {
     }
 
     static func paletteUse(input: URL, palette: URL, output: URL) -> [String] {
-        [
+        quietArguments + [
             "-i", input.path(percentEncoded: false),
             "-i", palette.path(percentEncoded: false),
             "-lavfi", "\(gifFilter)[scaled];[scaled][1:v]paletteuse",
@@ -92,7 +95,7 @@ enum FfmpegCommandBuilder {
     }
 
     static func remux(input: URL, output: URL) -> [String] {
-        [
+        quietArguments + [
             "-i", input.path(percentEncoded: false),
             "-c", "copy",
             "-n", output.path(percentEncoded: false),

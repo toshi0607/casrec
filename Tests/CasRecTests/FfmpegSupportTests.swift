@@ -72,12 +72,14 @@ struct FfmpegSupportTests {
         let use = FfmpegCommandBuilder.paletteUse(input: input, palette: palette, output: output)
 
         #expect(generation == [
+            "-hide_banner", "-loglevel", "error", "-nostats",
             "-i", "/tmp/input.mov",
             "-vf", "fps=10,scale=640:-1:flags=lanczos,palettegen",
             "-frames:v", "1",
             "-n", "/tmp/palette.png",
         ])
         #expect(use == [
+            "-hide_banner", "-loglevel", "error", "-nostats",
             "-i", "/tmp/input.mov",
             "-i", "/tmp/palette.png",
             "-lavfi", "fps=10,scale=640:-1:flags=lanczos[scaled];[scaled][1:v]paletteuse",
@@ -93,6 +95,7 @@ struct FfmpegSupportTests {
         let command = FfmpegCommandBuilder.remux(input: input, output: output)
 
         #expect(command == [
+            "-hide_banner", "-loglevel", "error", "-nostats",
             "-i", "/tmp/interrupted.mov",
             "-c", "copy",
             "-n", "/tmp/interrupted-recovered.mov",

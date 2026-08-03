@@ -133,6 +133,7 @@ struct MainView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                .labelsHidden()
                 .frame(maxWidth: 250)
                 .onChange(of: captureMode) {
                     syncSelection()
@@ -257,6 +258,7 @@ struct MainView: View {
                         Text("H.264").tag(VideoCodec.h264)
                     }
                     .pickerStyle(.menu)
+                    .labelsHidden()
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
@@ -269,6 +271,7 @@ struct MainView: View {
                         Text("50%").tag(50)
                     }
                     .pickerStyle(.menu)
+                    .labelsHidden()
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
@@ -281,6 +284,7 @@ struct MainView: View {
                         Text("60").tag(60)
                     }
                     .pickerStyle(.menu)
+                    .labelsHidden()
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
 

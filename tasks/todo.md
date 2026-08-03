@@ -92,10 +92,12 @@ Phase 2への持ち越し(opus実測による発見): audio input が有効な�
 
 ### 人間レビュー対応(PR #2、2026-08-03)
 
-指摘3件(Request changes相当):
-- [ ] (1) Medium: writer失敗検知の抜け — append経由でしかラッチせず、idle/無音中の非同期 .failed を ticker が検出できない(reviewerエージェントのN6と同根、Lowから格上げ)。stats/currentWriteFailure() で writer.status == .failed を毎回確認し writer.error を返す
-- [x] (2) 要判断: audio starvation のクラッシュ耐性 — Phase 2持ち越しを維持し、DESIGN.md §5.3 に「条件付き」であることを明示(本コミット)。コードコメントの保証表現の修正は(1)と併せて実施
-- [ ] (3) Low: テストターゲット追加 — 停止経路の競合(manual/streamFailure/diskCritical)、failed→idle、空ファイル+サイドカー削除条件、finishWriting一回保証、(1)の回帰テスト。CLT環境でのswift test可否(XCTest無し、Swift Testing同梱)は要プローブ
+指摘3件(Request changes相当)— 全対応済み(b45d188):
+- [x] (1) Medium: writer失敗検知 — stats照会(ticker毎秒)ごとに writer.status == .failed をラッチ。append経由は早期検知として残置。クラスdocの無条件保証2箇所を条件付きに修正
+- [x] (2) 要判断: audio starvation — Phase 2持ち越し維持+DESIGN.md §5.3に「条件付き」明示(0c4432a)+コードコメント修正(b45d188)
+- [x] (3) Low: テストターゲット — **18テスト/3スイート全パス(0.17s)**。停止経路競合(manual×streamFailure)、failed→acknowledge→idle、成果物削除規則、finishWriting一回保証、(1)の回帰2件。**変異テストで検出力確認**(対応1を戻す/排他を弱める→該当テストが失敗)、8回連続でflaky無し
+- 残課題(Phase 2へ): disk critical経路の競合テストは SessionGuards のプロトコル化が必要なため未カバー(停止3経路中2経路カバー)。CI(GitHub Actions macOSランナーで swift build+test)の追加もPhase 2初手候補
+- 環境知見: **CLTにXCTest無し。Swift TestingはCLT内にあるがSwiftPM未登録のため素の `swift test` は不成立 → `make test` に検索パス/rpathを集約**(unsafeFlags案は「テスト0件でexit 0」のサイレント成功になるため却下)。Xcode導入後は素のswift testも動く
 
 ## Notes(委譲ログ・逸脱記録)
 

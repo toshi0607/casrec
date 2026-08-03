@@ -30,9 +30,15 @@ struct WriterStats: Sendable, Equatable {
 
 /// Writes capture samples into a fragmented QuickTime movie (DESIGN.md §5.3).
 ///
-/// Crash resilience is the reason this layer exists at all: `movieFragmentInterval`
-/// flushes a playable fragment every 10 seconds, so a `kill -9` costs at most the samples
-/// since the last fragment boundary rather than the whole file.
+/// Crash resilience is the reason this layer exists at all: `movieFragmentInterval` flushes
+/// a fragment every 10 seconds, so a `kill -9` costs at most the samples since the last
+/// fragment boundary rather than the whole file.
+///
+/// That durability is **conditional**, and Phase 1's device testing is what established the
+/// condition (§5.3): it holds while every enabled audio input is actually receiving samples,
+/// and when audio is off entirely. An enabled audio input that never receives a single
+/// sample — App Audio is on by default, so a completely silent app is enough — produces no
+/// recoverable prefix at all, not merely a shorter one. Starved inputs are Phase 2 work.
 ///
 /// ## Thread safety
 ///
@@ -45,8 +51,8 @@ struct WriterStats: Sendable, Equatable {
 /// unbounded backlog of full-resolution frames accumulate in memory over a multi-hour
 /// recording (R5), and it keeps each `CMSampleBuffer` non-escaping.
 final class AssetWriterCoordinator: SampleConsuming, @unchecked Sendable {
-    /// Fragment cadence. Every 10 seconds the writer closes a fragment that stands on its
-    /// own, bounding how much a crash can cost (§5.3).
+    /// Fragment cadence. Every 10 seconds the writer closes a fragment, bounding how much a
+    /// crash can cost — subject to the audio-starvation caveat in this type's documentation.
     static let fragmentInterval = CMTime(seconds: 10, preferredTimescale: 600)
 
     /// Reference point for bitrate scaling: 1080p.
@@ -63,6 +69,11 @@ final class AssetWriterCoordinator: SampleConsuming, @unchecked Sendable {
 
     private let settings: RecordingSettings
     private let queue = DispatchQueue(label: "dev.toshi0607.casrec.assetwriter", qos: .userInitiated)
+    /// How the failure poll decides the writer has reached its terminal state. Production
+    /// reads the `AVAssetWriter` itself; tests substitute it to reproduce a writer that
+    /// failed while nothing was being appended, which a real writer cannot be asked to do
+    /// on demand.
+    private let writerHasFailed: @Sendable (AVAssetWriter?) -> Bool
 
     // MARK: - State owned exclusively by `queue`
 
@@ -82,9 +93,14 @@ final class AssetWriterCoordinator: SampleConsuming, @unchecked Sendable {
     /// Creates the writer and its audio inputs. The video input cannot be built yet: its
     /// dimensions come from the first sample's format description, so it is added lazily
     /// (and necessarily before `startWriting`, which is deferred to that same moment).
-    init(outputURL: URL, settings: RecordingSettings) throws {
+    init(
+        outputURL: URL,
+        settings: RecordingSettings,
+        writerHasFailed: @escaping @Sendable (AVAssetWriter?) -> Bool = { $0?.status == .failed }
+    ) throws {
         self.outputURL = outputURL
         self.settings = settings
+        self.writerHasFailed = writerHasFailed
 
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
         writer.movieFragmentInterval = Self.fragmentInterval
@@ -128,9 +144,19 @@ final class AssetWriterCoordinator: SampleConsuming, @unchecked Sendable {
 
     // MARK: - Stats
 
-    /// A consistent snapshot for the recording HUD.
+    /// A consistent snapshot for the recording HUD — and the poll that `RecordingSession`'s
+    /// ticker uses to notice a dead writer.
     var stats: WriterStats {
-        let snapshot = queue.sync { (droppedFrames, lastVideoSampleAt, writeFailure) }
+        let snapshot = queue.sync { () -> (Int, Date?, String?) in
+            // Ask the writer directly, every time. Latching on a rejected `append` alone is
+            // not enough: `AVAssetWriter` can enter `.failed` on its own — the volume goes
+            // away, the disk fills — while nothing is being appended at all. A still screen
+            // delivers `.idle` frames that are never appended, and a silent app appends no
+            // audio, so a recording can sit for hours over a writer that died in minute one
+            // and still show "recording" the whole time.
+            latchIfWriterFailed()
+            return (droppedFrames, lastVideoSampleAt, writeFailure)
+        }
         // Queried outside the lock: the file system is the source of truth for size, and
         // this must not contend with sample appends.
         let attributes = try? FileManager.default.attributesOfItem(atPath: outputURL.path(percentEncoded: false))
@@ -307,8 +333,11 @@ final class AssetWriterCoordinator: SampleConsuming, @unchecked Sendable {
     /// `RecordingSession`'s ticker stops the session within a second of `writeFailure`
     /// being set. `AVAssetWriter.status` is the only signal that means "nothing more can
     /// ever be written".
+    ///
+    /// Called from the append paths, which catch a failure early, and from `stats`, which is
+    /// what catches one that happens while no samples are flowing at all.
     private func latchIfWriterFailed() {
-        guard writer?.status == .failed else { return }
+        guard writerHasFailed(writer) else { return }
         recordWriterFailure()
     }
 

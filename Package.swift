@@ -13,6 +13,14 @@ let package = Package(
         .executableTarget(
             name: "CasRec",
             path: "Sources/CasRec"
-        )
+        ),
+        // Run with `make test`, not `swift test`: this machine has no Xcode, and the
+        // Command Line Tools ship Swift Testing without telling SwiftPM where it is.
+        // See the Makefile for the search paths that have to be supplied.
+        .testTarget(
+            name: "CasRecTests",
+            dependencies: ["CasRec"],
+            path: "Tests/CasRecTests"
+        ),
     ]
 )

@@ -12,7 +12,8 @@ struct CasRecApp: App {
         Window("CasRec", id: "main") {
             MainView(
                 session: appDelegate.session,
-                captureService: appDelegate.captureService
+                captureService: appDelegate.captureService,
+                scheduler: appDelegate.scheduler
             )
         }
     }
@@ -25,6 +26,7 @@ struct CasRecApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let captureService: CaptureService
     let session: RecordingSession
+    let scheduler: RecordingScheduler
 
     /// Mirror of the session's published state, so the synchronous
     /// `applicationShouldTerminate` can decide without awaiting.
@@ -35,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let captureService = CaptureService()
         self.captureService = captureService
         self.session = RecordingSession(captureService: captureService)
+        self.scheduler = RecordingScheduler()
         super.init()
     }
 

@@ -31,6 +31,9 @@ final class CaptureService: CaptureServicing, @unchecked Sendable {
     /// callback from a superseded stream cannot tear down its successor.
     private var activeGeneration = 0
     private var endedContinuation: AsyncStream<CaptureEndReason>.Continuation?
+    /// Separates an ending stream's continuation from a replacement subscriber that may
+    /// arrive while the old continuation is being finished.
+    private var endedContinuationID: UUID?
 
     private static let videoQueue = DispatchQueue(label: "dev.casrec.capture.video")
     private static let audioQueue = DispatchQueue(label: "dev.casrec.capture.audio")
@@ -145,9 +148,11 @@ final class CaptureService: CaptureServicing, @unchecked Sendable {
             // Only one capture is ever active at a time, so a fresh subscriber
             // supersedes the previous one; finish it so its consumer's `for await`
             // loop exits instead of hanging forever.
+            let continuationID = UUID()
             let previous = withLock { () -> AsyncStream<CaptureEndReason>.Continuation? in
                 let old = endedContinuation
                 endedContinuation = continuation
+                endedContinuationID = continuationID
                 return old
             }
             previous?.finish()
@@ -176,13 +181,20 @@ final class CaptureService: CaptureServicing, @unchecked Sendable {
         // A `didStopWithError` callback can race a manual `stopCapture()`, and a stream
         // that has already been replaced can still call back afterwards; report only when
         // this is the capture currently on record.
-        let continuation = withLock { () -> AsyncStream<CaptureEndReason>.Continuation? in
-            guard activeGeneration == generation, activeStream != nil else { return nil }
+        let (continuation, continuationID) = withLock {
+            () -> (AsyncStream<CaptureEndReason>.Continuation?, UUID?) in
+            guard activeGeneration == generation, activeStream != nil else { return (nil, nil) }
             activeStream = nil
             activeRelay = nil
-            return endedContinuation
+            return (endedContinuation, endedContinuationID)
         }
         continuation?.yield(Self.classifyStopReason(error))
+        continuation?.finish()
+        withLock {
+            guard endedContinuationID == continuationID else { return }
+            endedContinuation = nil
+            endedContinuationID = nil
+        }
     }
 
     // MARK: - Filter construction (DESIGN.md §5.2)

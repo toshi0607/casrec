@@ -137,6 +137,10 @@ final class MockCaptureService: CaptureServicing {
         }
     }
 
+    func capturePreview(for source: CaptureSource) async throws -> CapturePreview {
+        throw MockCaptureServiceError.previewUnavailable
+    }
+
     func startCapture(source: CaptureSource, settings: RecordingSettings, sink: any SampleConsuming) async throws {
     }
 
@@ -148,4 +152,8 @@ final class MockCaptureService: CaptureServicing {
             continuation.finish()
         }
     }
+}
+
+private enum MockCaptureServiceError: Error {
+    case previewUnavailable
 }

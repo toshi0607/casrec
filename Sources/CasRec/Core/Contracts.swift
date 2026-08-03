@@ -54,6 +54,9 @@ struct RecordingSettings: Sendable, Equatable {
     var captureMicrophone: Bool
     /// Directory recordings are written to.
     var destinationDirectory: URL
+    /// Optional crop inside a window filter. `nil` records the entire selected window;
+    /// a value is in the filter's content coordinate system, expressed in points.
+    var sourceCropRect: CGRect? = nil
 
     static let `default` = RecordingSettings(
         codec: .hevc,
@@ -91,6 +94,16 @@ struct CaptureSource: Identifiable, @unchecked Sendable {
     let scWindow: SCWindow?
     let scDisplay: SCDisplay?
     let thumbnail: CGImage?
+}
+
+/// A current, full-window screenshot used only while choosing a crop. The image is
+/// intentionally separate from `CaptureSource`: a source is an enumeration result,
+/// whereas this is an on-demand preview of its present contents.
+struct CapturePreview: Identifiable, @unchecked Sendable {
+    let id = UUID()
+    let image: CGImage
+    /// Size of the independent-window filter's content coordinate space, in points.
+    let contentSize: CGSize
 }
 
 // MARK: - Sample routing (DESIGN.md §5.3)
@@ -148,6 +161,10 @@ protocol CaptureServicing: Sendable {
     /// Available displays and windows, refreshed periodically with thumbnails — or the
     /// reason the list could not be read, which the UI must surface (§5.5).
     func observeSources() -> AsyncStream<CaptureSourcesUpdate>
+
+    /// Takes a fresh full-window screenshot for crop selection. It never starts a stream
+    /// or changes the active recording.
+    func capturePreview(for source: CaptureSource) async throws -> CapturePreview
 
     /// Builds the content filter for `source` (§5.2), starts an `SCStream` configured
     /// per `settings` (§5.1), and relays samples to `sink` until the stream ends.

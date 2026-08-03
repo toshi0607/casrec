@@ -1,7 +1,6 @@
-import AppKit
 import Foundation
 import Observation
-import SwiftUI
+import AppKit
 
 /// The action shared by the menu-bar item and the global hot key.  Keeping this decision
 /// free of UI and side effects makes transition states deliberately harmless.
@@ -44,10 +43,6 @@ final class RecordingControls {
     private var stateObserver: Task<Void, Never>?
     private var reservationObserver: Task<Void, Never>?
     private var scheduleEventObserver: Task<Void, Never>?
-    /// Captured from the durable main Window scene once it is created.  A MenuBarExtra
-    /// environment action cannot be used here because its content only exists while the
-    /// menu is open.
-    private var mainWindowPresenter: (@MainActor () -> Void)?
 
     init(
         session: any RecordingSessionControlling,
@@ -83,13 +78,6 @@ final class RecordingControls {
                     self.scheduleBannerMessage = message
                 }
             }
-        }
-    }
-
-    func configureMainWindowPresenter(_ openWindow: OpenWindowAction) {
-        mainWindowPresenter = {
-            openWindow(id: "main")
-            NSApp.activate(ignoringOtherApps: true)
         }
     }
 
@@ -216,7 +204,10 @@ final class RecordingControls {
 
     private func presentQuickStartFailure(_ message: String) {
         quickStartBannerMessage = message
-        mainWindowPresenter?()
+        NSApp.activate(ignoringOtherApps: true)
+        if let mainWindow = NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }) {
+            mainWindow.makeKeyAndOrderFront(nil)
+        }
     }
 }
 

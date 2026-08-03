@@ -10,7 +10,6 @@ struct MainView: View {
     let session: any RecordingSessionControlling
     let captureService: any CaptureServicing
     @Bindable var controls: RecordingControls
-    @Environment(\.openWindow) private var openWindow
 
     @State private var sources: [CaptureSource] = []
     /// Non-nil while the source list cannot be read — most importantly when screen
@@ -100,9 +99,6 @@ struct MainView: View {
             }
         }
         .frame(minWidth: 500, minHeight: 400)
-        .onAppear {
-            controls.configureMainWindowPresenter(openWindow)
-        }
         .task(id: isPollingSources) {
             guard isPollingSources else { return }
             await observeSources()

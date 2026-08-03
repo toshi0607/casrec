@@ -100,15 +100,15 @@ struct MainView: View {
             }
         }
         .frame(minWidth: 500, minHeight: 400)
+        .onAppear {
+            controls.configureMainWindowPresenter(openWindow)
+        }
         .task(id: isPollingSources) {
             guard isPollingSources else { return }
             await observeSources()
         }
         .onChange(of: currentState) { _, state in
             updateRecordingCompletion(state)
-        }
-        .onChange(of: controls.mainWindowRequest) {
-            showMainWindow()
         }
         .sheet(item: $cropPreview) { preview in
             CropSelectionSheet(
@@ -547,13 +547,6 @@ struct MainView: View {
             errorMessage = message
             showingError = true
         }
-    }
-
-    /// A MenuBarExtra's content only exists while its menu is open.  The application Window
-    /// scene remains the reliable observer for a hot-key failure that must reveal this view.
-    private func showMainWindow() {
-        openWindow(id: "main")
-        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func observeSources() async {

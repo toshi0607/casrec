@@ -32,7 +32,6 @@ struct MainView: View {
     @State private var scheduledMaximumDuration: RecordingDurationLimit = .none
     @State private var scheduledRecording: ScheduledRecording?
     @State private var scheduleBannerMessage: String?
-    @State private var scheduledSleepActivity: NSObjectProtocol?
 
     @State private var errorMessage: String?
     @State private var showingError = false
@@ -554,13 +553,10 @@ struct MainView: View {
         }
     }
 
-    /// The reservation must keep the Mac awake while it is waiting: if idle system sleep
-    /// wins first, the process cannot fire the recording at the requested wall-clock time.
     private func observeScheduledRecording() async {
         let stream = await scheduler.observeReservation()
         for await reservation in stream {
             scheduledRecording = reservation
-            updateScheduledSleepActivity(isScheduled: reservation != nil)
         }
     }
 
@@ -573,18 +569,6 @@ struct MainView: View {
             case .couldNotStart(let message):
                 scheduleBannerMessage = message
             }
-        }
-    }
-
-    private func updateScheduledSleepActivity(isScheduled: Bool) {
-        if isScheduled, scheduledSleepActivity == nil {
-            scheduledSleepActivity = ProcessInfo.processInfo.beginActivity(
-                options: [.idleSystemSleepDisabled],
-                reason: "Keep CasRec awake until its scheduled recording starts."
-            )
-        } else if !isScheduled, let scheduledSleepActivity {
-            ProcessInfo.processInfo.endActivity(scheduledSleepActivity)
-            self.scheduledSleepActivity = nil
         }
     }
 
@@ -632,6 +616,10 @@ struct MainView: View {
 
     private func scheduleRecording() async {
         refreshOutputDirectory()
+        guard scheduledStartAt > Date() else {
+            scheduleBannerMessage = "開始時刻には現在より後の時刻を指定してください。"
+            return
+        }
         guard outputDirectoryPreferences.isUsable(settings.destinationDirectory) else {
             scheduleBannerMessage = "保存先を利用できません。保存先を変更してから予約してください。"
             return
@@ -742,7 +730,10 @@ private func startScheduledRecording(
                 return .couldNotStart(message: "予約時刻になりましたが、録画状態が待機中ではないため開始しませんでした。")
             }
             await session.start(source: source, settings: reservation.settings)
-            return .started
+            guard case .recording(let progress) = await recordingState(of: session) else {
+                return .couldNotStart(message: "予約録画を開始できませんでした。")
+            }
+            return .started(recordingStartedAt: progress.startedAt)
         case .unavailable(let reason):
             return .couldNotStart(message: "録画対象を再取得できないため、録画を開始しませんでした: \(scheduleSourceErrorMessage(reason))")
         }

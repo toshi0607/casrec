@@ -31,7 +31,10 @@ enum RecordingScheduleEvent: Sendable {
 }
 
 enum ScheduledRecordingStartResult: Sendable {
-    case started
+    /// The `RecordingProgress.startedAt` value of the session that actually began.  The
+    /// scheduler later uses this identity to ensure its auto-stop cannot stop a newer,
+    /// unrelated recording after the scheduled one was manually stopped.
+    case started(recordingStartedAt: Date)
     case couldNotStart(message: String)
 }
 
@@ -49,6 +52,41 @@ struct SchedulingClock: Sendable {
             try await Task.sleep(for: .seconds(interval))
         }
     )
+}
+
+/// Starts and ends the assertion that keeps a pending reservation awake.  It is separate
+/// from the recording session's own guard because it exists only before recording starts.
+protocol ScheduledSleepPreventing: Sendable {
+    func beginScheduledWait()
+    func endScheduledWait()
+}
+
+/// Locking makes the ProcessInfo activity token safe to own from `RecordingScheduler`'s
+/// actor while ensuring it is released even if the SwiftUI window has already disappeared.
+final class ScheduledSleepGuard: ScheduledSleepPreventing, @unchecked Sendable {
+    private let lock = NSLock()
+    private var activity: NSObjectProtocol?
+
+    func beginScheduledWait() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard activity == nil else { return }
+        // A pending reservation cannot fire while the app is in idle system sleep.
+        activity = ProcessInfo.processInfo.beginActivity(
+            options: [.idleSystemSleepDisabled],
+            reason: "Keep CasRec awake until its scheduled recording starts."
+        )
+    }
+
+    func endScheduledWait() {
+        lock.lock()
+        let activity = activity
+        self.activity = nil
+        lock.unlock()
+        if let activity {
+            ProcessInfo.processInfo.endActivity(activity)
+        }
+    }
 }
 
 /// Owns one pending recording reservation and its optional post-start stop timer.
@@ -70,13 +108,18 @@ actor RecordingScheduler {
     }
 
     private let clock: SchedulingClock
+    private let sleepPreventer: any ScheduledSleepPreventing
     private var pending: PendingReservation?
     private var autoStopTasks: [UUID: Task<Void, Never>] = [:]
     private var reservationContinuations: [UUID: AsyncStream<ScheduledRecording?>.Continuation] = [:]
     private var eventContinuations: [UUID: AsyncStream<RecordingScheduleEvent>.Continuation] = [:]
 
-    init(clock: SchedulingClock = .live) {
+    init(
+        clock: SchedulingClock = .live,
+        sleepPreventer: any ScheduledSleepPreventing = ScheduledSleepGuard()
+    ) {
         self.clock = clock
+        self.sleepPreventer = sleepPreventer
     }
 
     /// Replaces an existing reservation.  The previous timer is cancelled before the new
@@ -88,6 +131,7 @@ actor RecordingScheduler {
         stop: @escaping StopAction
     ) {
         cancelPendingReservation()
+        sleepPreventer.beginScheduledWait()
         pending = PendingReservation(
             reservation: reservation,
             stateProvider: stateProvider,
@@ -140,6 +184,7 @@ actor RecordingScheduler {
 
         guard let pending, pending.reservation.id == reservationID else { return }
         self.pending = nil
+        sleepPreventer.endScheduledWait()
         publishReservation(nil)
 
         let state = await pending.stateProvider()
@@ -148,13 +193,14 @@ actor RecordingScheduler {
             return
         }
 
-        let startedAt = clock.now()
         switch await pending.start(pending.reservation) {
-        case .started:
+        case .started(let recordingStartedAt):
             if let maximumDuration = pending.reservation.maximumDuration {
                 scheduleAutoStop(
                     reservationID: reservationID,
-                    at: startedAt.addingTimeInterval(maximumDuration),
+                    at: recordingStartedAt.addingTimeInterval(maximumDuration),
+                    expectedRecordingStartedAt: recordingStartedAt,
+                    stateProvider: pending.stateProvider,
                     stop: pending.stop
                 )
             }
@@ -163,11 +209,23 @@ actor RecordingScheduler {
         }
     }
 
-    private func scheduleAutoStop(reservationID: UUID, at stopAt: Date, stop: @escaping StopAction) {
+    private func scheduleAutoStop(
+        reservationID: UUID,
+        at stopAt: Date,
+        expectedRecordingStartedAt: Date,
+        stateProvider: @escaping StateProvider,
+        stop: @escaping StopAction
+    ) {
         let task = Task { [weak self, clock] in
             do {
                 try await clock.sleepUntil(stopAt)
             } catch {
+                return
+            }
+            guard case .recording(let progress) = await stateProvider(),
+                  progress.startedAt == expectedRecordingStartedAt
+            else {
+                await self?.removeAutoStopTask(reservationID)
                 return
             }
             await stop()
@@ -178,8 +236,10 @@ actor RecordingScheduler {
     }
 
     private func cancelPendingReservation() {
-        pending?.firingTask?.cancel()
-        pending = nil
+        guard let pending else { return }
+        pending.firingTask?.cancel()
+        self.pending = nil
+        sleepPreventer.endScheduledWait()
         publishReservation(nil)
     }
 

@@ -9,12 +9,12 @@ struct RecordingSchedulerTests {
     func firingStartsRecording() async {
         let clock = ManualSchedulingClock(now: referenceDate)
         let recorder = SchedulerCallRecorder()
-        let scheduler = RecordingScheduler(clock: clock.makeClock())
+        let scheduler = testScheduler(clock)
 
         await scheduler.schedule(
             reservation(at: referenceDate.addingTimeInterval(60)),
             stateProvider: { .idle },
-            start: { _ in recorder.recordStart(); return .started },
+            start: { _ in recorder.recordStart(); return .started(recordingStartedAt: referenceDate) },
             stop: { recorder.recordStop() }
         )
 
@@ -30,12 +30,12 @@ struct RecordingSchedulerTests {
     func cancellingPreventsStart() async {
         let clock = ManualSchedulingClock(now: referenceDate)
         let recorder = SchedulerCallRecorder()
-        let scheduler = RecordingScheduler(clock: clock.makeClock())
+        let scheduler = testScheduler(clock)
 
         await scheduler.schedule(
             reservation(at: referenceDate.addingTimeInterval(60)),
             stateProvider: { .idle },
-            start: { _ in recorder.recordStart(); return .started },
+            start: { _ in recorder.recordStart(); return .started(recordingStartedAt: referenceDate) },
             stop: { recorder.recordStop() }
         )
         await clock.waitForSleepCalls(1)
@@ -46,16 +46,37 @@ struct RecordingSchedulerTests {
         #expect(recorder.startCount == 0)
     }
 
+    @Test("Cancelling a reservation releases its scheduled sleep guard")
+    func cancellingReleasesScheduledSleepGuard() async {
+        let clock = ManualSchedulingClock(now: referenceDate)
+        let sleepPreventer = TestScheduledSleepPreventer()
+        let scheduler = RecordingScheduler(clock: clock.makeClock(), sleepPreventer: sleepPreventer)
+
+        await scheduler.schedule(
+            reservation(at: referenceDate.addingTimeInterval(60)),
+            stateProvider: { .idle },
+            start: { _ in .started(recordingStartedAt: referenceDate) },
+            stop: {}
+        )
+        await waitFor { sleepPreventer.beginCount == 1 }
+
+        await scheduler.cancel()
+        await waitFor { sleepPreventer.endCount == 1 }
+
+        #expect(sleepPreventer.beginCount == 1)
+        #expect(sleepPreventer.endCount == 1)
+    }
+
     @Test("A non-idle session consumes the reservation without starting")
     func nonIdleSessionIsSkipped() async {
         let clock = ManualSchedulingClock(now: referenceDate)
         let recorder = SchedulerCallRecorder()
-        let scheduler = RecordingScheduler(clock: clock.makeClock())
+        let scheduler = testScheduler(clock)
 
         await scheduler.schedule(
             reservation(at: referenceDate.addingTimeInterval(60)),
             stateProvider: { .failed(message: "previous recording failed") },
-            start: { _ in recorder.recordStart(); return .started },
+            start: { _ in recorder.recordStart(); return .started(recordingStartedAt: referenceDate) },
             stop: { recorder.recordStop() }
         )
 
@@ -70,13 +91,18 @@ struct RecordingSchedulerTests {
     func maximumDurationStopsRecording() async {
         let clock = ManualSchedulingClock(now: referenceDate)
         let recorder = SchedulerCallRecorder()
-        let scheduler = RecordingScheduler(clock: clock.makeClock())
+        let sessionState = SchedulerSessionState()
+        let scheduler = testScheduler(clock)
         let startAt = referenceDate.addingTimeInterval(60)
 
         await scheduler.schedule(
             reservation(at: startAt, maximumDuration: 30),
-            stateProvider: { .idle },
-            start: { _ in recorder.recordStart(); return .started },
+            stateProvider: { sessionState.current },
+            start: { _ in
+                sessionState.set(recordingState(startedAt: startAt))
+                recorder.recordStart()
+                return .started(recordingStartedAt: startAt)
+            },
             stop: { recorder.recordStop() }
         )
 
@@ -90,25 +116,58 @@ struct RecordingSchedulerTests {
         #expect(recorder.stopCount == 1)
     }
 
+    @Test("An auto-stop never stops a newer recording")
+    func maximumDurationDoesNotStopANewerRecording() async {
+        let clock = ManualSchedulingClock(now: referenceDate)
+        let recorder = SchedulerCallRecorder()
+        let sessionState = SchedulerSessionState()
+        let scheduler = testScheduler(clock)
+        let scheduledStart = referenceDate.addingTimeInterval(60)
+
+        await scheduler.schedule(
+            reservation(at: scheduledStart, maximumDuration: 30),
+            stateProvider: { sessionState.current },
+            start: { _ in
+                sessionState.set(recordingState(startedAt: scheduledStart))
+                recorder.recordStart()
+                return .started(recordingStartedAt: scheduledStart)
+            },
+            stop: { recorder.recordStop() }
+        )
+
+        await clock.waitForSleepCalls(1)
+        clock.advance(to: scheduledStart)
+        await waitFor { recorder.startCount == 1 }
+        await clock.waitForSleepCalls(2)
+
+        // The scheduled recording was stopped and a different recording began before the
+        // original time limit. Its distinct `startedAt` must make the timer a no-op.
+        sessionState.set(recordingState(startedAt: scheduledStart.addingTimeInterval(5)))
+        clock.advance(to: scheduledStart.addingTimeInterval(30))
+        await Task.yield()
+
+        #expect(recorder.stopCount == 0)
+    }
+
     @Test("A new reservation replaces and cancels the old one")
     func newReservationReplacesOldReservation() async {
         let clock = ManualSchedulingClock(now: referenceDate)
         let recorder = SchedulerCallRecorder()
-        let scheduler = RecordingScheduler(clock: clock.makeClock())
+        let scheduler = testScheduler(clock)
         let first = referenceDate.addingTimeInterval(60)
         let second = referenceDate.addingTimeInterval(120)
 
         await scheduler.schedule(
             reservation(at: first),
             stateProvider: { .idle },
-            start: { _ in recorder.recordStart(); return .started },
+            start: { _ in recorder.recordStart(); return .started(recordingStartedAt: referenceDate) },
             stop: { recorder.recordStop() }
         )
         await clock.waitForSleepCalls(1)
         await scheduler.schedule(
             reservation(at: second),
             stateProvider: { .idle },
-            start: { _ in recorder.recordStart(); return .started },
+            start: { _ in recorder.recordStart(); return .started(recordingStartedAt: referenceDate) },
             stop: { recorder.recordStop() }
         )
         await clock.waitForSleepCalls(2)
@@ -156,6 +215,10 @@ struct CaptureSourceResolverTests {
 
 private let referenceDate = Date(timeIntervalSinceReferenceDate: 1_000_000)
 
+private func testScheduler(_ clock: ManualSchedulingClock) -> RecordingScheduler {
+    RecordingScheduler(clock: clock.makeClock(), sleepPreventer: NoopScheduledSleepPreventer())
+}
+
 private func reservation(at startAt: Date, maximumDuration: TimeInterval? = nil) -> ScheduledRecording {
     ScheduledRecording(
         startAt: startAt,
@@ -184,6 +247,34 @@ private final class SchedulerCallRecorder: @unchecked Sendable {
     var stopCount: Int { state.withLock { $0.stops } }
     func recordStart() { state.withLock { $0.starts += 1 } }
     func recordStop() { state.withLock { $0.stops += 1 } }
+}
+
+private final class SchedulerSessionState: @unchecked Sendable {
+    private let state = Mutex<RecordingState>(.idle)
+    var current: RecordingState { state.withLock { $0 } }
+    func set(_ newState: RecordingState) { state.withLock { $0 = newState } }
+}
+
+private final class NoopScheduledSleepPreventer: ScheduledSleepPreventing, Sendable {
+    func beginScheduledWait() {}
+    func endScheduledWait() {}
+}
+
+private final class TestScheduledSleepPreventer: ScheduledSleepPreventing, @unchecked Sendable {
+    private let state = Mutex((begins: 0, ends: 0))
+    var beginCount: Int { state.withLock { $0.begins } }
+    var endCount: Int { state.withLock { $0.ends } }
+    func beginScheduledWait() { state.withLock { $0.begins += 1 } }
+    func endScheduledWait() { state.withLock { $0.ends += 1 } }
+}
+
+private func recordingState(startedAt: Date) -> RecordingState {
+    .recording(RecordingProgress(
+        startedAt: startedAt,
+        bytesWritten: 0,
+        droppedFrames: 0,
+        isStalled: false
+    ))
 }
 
 /// A lock-backed virtual clock lets tests advance scheduled work instantly.  It is marked

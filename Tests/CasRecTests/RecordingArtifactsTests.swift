@@ -31,9 +31,20 @@ struct RecordingArtifactsTests {
         try Data().write(to: artifacts.outputURL)
         #expect(directory.contents().count == 2)
 
-        artifacts.discardIfEmpty()
+        #expect(artifacts.discardIfEmpty(), "empty recording artifacts must report that they were discarded")
 
         #expect(directory.contents().isEmpty)
+    }
+
+    @Test("A non-empty movie reports that it was kept")
+    func reportsWhenPartialMovieIsKept() throws {
+        let directory = TempDirectory()
+        defer { directory.remove() }
+
+        let artifacts = try RecordingArtifacts.create(displayName: "Safari", in: directory.url, at: Date())
+        try Data(repeating: 0xAB, count: 1).write(to: artifacts.outputURL)
+
+        #expect(!artifacts.discardIfEmpty())
     }
 
     @Test("A movie with bytes in it is kept, sidecar included, for the repair flow")

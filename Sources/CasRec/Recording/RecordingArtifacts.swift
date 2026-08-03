@@ -48,10 +48,22 @@ struct RecordingArtifacts: Sendable, Equatable {
 
     /// Removes the `.mov` and its sidecar when nothing was ever recorded, so a failed
     /// start does not leave a zero-byte file that the library would flag for repair.
-    func discardIfEmpty() {
-        guard Self.fileSize(of: outputURL) == 0 else { return }
-        try? FileManager.default.removeItem(at: outputURL)
+    /// Returns whether the empty movie was discarded. Callers use this to avoid telling a
+    /// user that a recording remains when the failed session left no media behind.
+    @discardableResult
+    func discardIfEmpty() -> Bool {
+        guard Self.fileSize(of: outputURL) == 0 else { return false }
+        let manager = FileManager.default
+        do {
+            if manager.fileExists(atPath: outputURL.path(percentEncoded: false)) {
+                try manager.removeItem(at: outputURL)
+            }
+        } catch {
+            Self.log.error("failed to discard empty movie: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
         removeSidecar()
+        return true
     }
 
     /// Current size of the output file, or 0 when it does not exist yet.

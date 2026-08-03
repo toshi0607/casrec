@@ -310,8 +310,9 @@ casrec/
 ### Phase 3 — 便利に使える
 - ~~ライブラリ画面(履歴・QuickLook・削除)~~ **実装済み**: `.mov` / `.mp4` / `.gif` を新しい順に表示し、未finalizeバッジ、QuickLook、Finder表示、ゴミ箱への移動を提供する。
 - ~~保存先変更UI(§7)~~ **実装済み**: `NSOpenPanel` による保存先選択、UserDefaultsへの保存、起動時・録画開始時の健全性確認と既定値フォールバックを提供する。
-- **次タスク**: 圧縮(AVAssetExportSession、高圧縮HEVC / 互換H.264プリセット)、GIF変換(ffmpeg検出)、破損ファイルの検出と修復導線(§5.5)、およびそれらを直列実行するジョブキュー。
-- 全画面モード
+- ~~圧縮(AVAssetExportSession、高圧縮HEVC / 互換H.264プリセット)、GIF変換(ffmpeg検出)、破損ファイルの検出と修復導線(§5.5)、およびそれらを直列実行するジョブキュー~~ **実装済み**: ffmpeg を Homebrew/PATH 順で任意検出し、GIFは10fps・幅640pxの2パス palettegen/paletteuse、修復は原本・サイドカーを残す `-c copy` remux として実装。各ジョブはFIFO直列実行・同一ソース/種別の重複排除を行い、ライブラリ行に待機/進捗/エラーを表示する。ffmpeg 不在時はGIF・修復を非活性化して `brew install ffmpeg` を案内する。
+- ~~全画面モード~~ **実装済み**
+- **Phase 3 の残タスクはなし**。
 - **完了条件**: 録画→圧縮→GIFの一連がUIから完結。ffmpeg無し環境ではGIF・修復のみ非活性。
 
 ### Phase 4 — 磨き(任意)

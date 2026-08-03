@@ -332,6 +332,7 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
             }
             let deadline = Task {
                 try? await Task.sleep(for: Self.stopCaptureTimeout)
+                guard !Task.isCancelled else { return }
                 continuation.yield(false)
             }
             var stopped = false

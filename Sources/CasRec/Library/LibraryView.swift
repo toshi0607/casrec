@@ -11,6 +11,13 @@ struct LibraryView: View {
     @State private var entries: [LibraryEntry] = []
     @State private var entryToDelete: LibraryEntry?
     @State private var errorMessage: String?
+    @State private var jobQueue = PostProcessQueue()
+    @State private var jobStatuses: [PostProcessJobStatus] = []
+    @State private var handledTerminalJobIDs = Set<String>()
+
+    private var ffmpegIsAvailable: Bool {
+        FfmpegLocator().locate() != nil
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,6 +33,15 @@ struct LibraryView: View {
             }
             .padding()
 
+            if !ffmpegIsAvailable {
+                Text("GIF変換・修復には ffmpeg が必要です。`brew install ffmpeg` でインストールできます。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+            }
+
             if entries.isEmpty {
                 ContentUnavailableView(
                     "録画はまだありません",
@@ -35,12 +51,23 @@ struct LibraryView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(entries) { entry in
-                    LibraryRow(entry: entry, allowsDeletion: allowsDeletion) {
+                    LibraryRow(
+                        entry: entry,
+                        allowsDeletion: allowsDeletion,
+                        ffmpegIsAvailable: ffmpegIsAvailable,
+                        jobStatus: jobStatuses.first { $0.job.sourceURL == entry.url }
+                    ) {
                         QuickLookPreviewer.shared.show(entry.url)
                     } showInFinder: {
                         NSWorkspace.shared.activateFileViewerSelecting([entry.url])
                     } delete: {
                         entryToDelete = entry
+                    } compress: { preset in
+                        enqueue(entry: entry, operation: .compress(preset))
+                    } makeGIF: {
+                        enqueue(entry: entry, operation: .gif)
+                    } recover: {
+                        enqueue(entry: entry, operation: .recover)
                     }
                     .onTapGesture(count: 2) {
                         QuickLookPreviewer.shared.show(entry.url)
@@ -51,6 +78,9 @@ struct LibraryView: View {
         }
         .task(id: "\(directory.path(percentEncoded: false))-\(refreshToken)") {
             await reload()
+        }
+        .task {
+            await observeJobs()
         }
         .alert("録画をゴミ箱に移動しますか？", isPresented: Binding(
             get: { entryToDelete != nil },
@@ -94,14 +124,81 @@ struct LibraryView: View {
             }
         }
     }
+
+    private func enqueue(entry: LibraryEntry, operation: PostProcessOperation) {
+        let outputNamer = PostProcessOutputNamer()
+        let fileExists: (URL) -> Bool = { url in
+            FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
+        }
+        let output: URL
+        switch operation {
+        case .compress:
+            output = outputNamer.nextAvailableURL(
+                sourceURL: entry.url,
+                suffix: "-compressed",
+                fileExtension: "mp4",
+                fileExists: fileExists
+            )
+        case .gif:
+            output = outputNamer.nextAvailableURL(
+                sourceURL: entry.url,
+                suffix: "",
+                fileExtension: "gif",
+                fileExists: fileExists
+            )
+        case .recover:
+            output = outputNamer.nextAvailableURL(
+                sourceURL: entry.url,
+                suffix: "-recovered",
+                fileExtension: "mov",
+                fileExists: fileExists
+            )
+        }
+        let job = PostProcessJob(sourceURL: entry.url, outputURL: output, operation: operation)
+        Task {
+            _ = await jobQueue.enqueue(job)
+        }
+    }
+
+    private func observeJobs() async {
+        let stream = await jobQueue.observe()
+        for await statuses in stream {
+            jobStatuses = statuses
+            let terminalStatuses = statuses.filter { status in
+                !handledTerminalJobIDs.contains(status.id) && status.isTerminal
+            }
+            guard !terminalStatuses.isEmpty else { continue }
+            handledTerminalJobIDs.formUnion(terminalStatuses.map(\.id))
+
+            if terminalStatuses.contains(where: { status in
+                if case .completed = status.state { return true }
+                return false
+            }) {
+                await reload()
+            }
+            if let failure = terminalStatuses.first(where: { status in
+                if case .failed = status.state { return true }
+                return false
+            }), case .failed(let message) = failure.state {
+                errorMessage = "\(failure.job.sourceURL.lastPathComponent): \(message)"
+            }
+            await jobQueue.removeFinished()
+            handledTerminalJobIDs.subtract(terminalStatuses.map(\.id))
+        }
+    }
 }
 
 private struct LibraryRow: View {
     let entry: LibraryEntry
     let allowsDeletion: Bool
+    let ffmpegIsAvailable: Bool
+    let jobStatus: PostProcessJobStatus?
     let quickLook: () -> Void
     let showInFinder: () -> Void
     let delete: () -> Void
+    let compress: (CompressionPreset) -> Void
+    let makeGIF: () -> Void
+    let recover: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -124,6 +221,9 @@ private struct LibraryRow: View {
                 Text("\(entry.dateText)  ・  \(entry.durationText)  ・  \(entry.fileSizeText)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let jobStatus {
+                    JobStatusView(status: jobStatus)
+                }
             }
 
             Spacer(minLength: 12)
@@ -131,6 +231,21 @@ private struct LibraryRow: View {
             Menu {
                 Button("Quick Look", action: quickLook)
                 Button("Finderで表示", action: showInFinder)
+                if !entry.isGIF {
+                    Menu("圧縮") {
+                        ForEach(CompressionPreset.allCases, id: \.self) { preset in
+                            Button(preset.label) { compress(preset) }
+                        }
+                    }
+                    Button("GIF変換", action: makeGIF)
+                        .disabled(!ffmpegIsAvailable)
+                        .help("ffmpeg が必要です。brew install ffmpeg")
+                }
+                if entry.isUnfinalized {
+                    Button("修復を試す", action: recover)
+                        .disabled(!ffmpegIsAvailable)
+                        .help("ffmpeg が必要です。brew install ffmpeg")
+                }
                 Divider()
                 Button("ゴミ箱に移動", role: .destructive, action: delete)
                     .disabled(!allowsDeletion)
@@ -141,6 +256,43 @@ private struct LibraryRow: View {
             .frame(width: 28)
         }
         .padding(.vertical, 4)
+    }
+}
+
+private struct JobStatusView: View {
+    let status: PostProcessJobStatus
+
+    var body: some View {
+        switch status.state {
+        case .waiting:
+            Text("待機中")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        case .running(let progress):
+            HStack(spacing: 5) {
+                if let progress {
+                    ProgressView(value: progress, total: 100)
+                        .frame(width: 70)
+                    Text("\(Int(progress.rounded()))%")
+                } else {
+                    ProgressView()
+                    Text("変換中…")
+                }
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+        case .completed, .failed:
+            EmptyView()
+        }
+    }
+}
+
+private extension PostProcessJobStatus {
+    var isTerminal: Bool {
+        switch state {
+        case .completed, .failed: true
+        case .waiting, .running: false
+        }
     }
 }
 

@@ -26,6 +26,9 @@ struct RecordingProgress: Sendable, Equatable {
     var startedAt: Date
     var bytesWritten: Int64
     var droppedFrames: Int
+    /// Audio samples rejected by the writer. This is observational only: it never changes
+    /// the recording state or the existing video-drop metric.
+    var audioAppendFailures: Int = 0
     var isStalled: Bool
     /// Free space on the destination volume fell below 5 GB — the UI warns while recording
     /// continues; the automatic stop happens at 2 GB (§5.4).

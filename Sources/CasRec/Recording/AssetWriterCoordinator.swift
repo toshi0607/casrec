@@ -20,6 +20,8 @@ enum RecordingFinishResult: Sendable, Equatable {
 struct WriterStats: Sendable, Equatable {
     var bytesWritten: Int64
     var droppedFrames: Int
+    /// Audio samples that reached `append` but the audio input rejected.
+    var audioAppendFailures: Int
     /// When the most recent video sample was *received* — the basis for stall detection.
     /// Receipt, not a successful append, is what proves the stream is still alive: a
     /// perfectly static screen delivers `.idle` frames that are never appended (§5.3).
@@ -84,6 +86,7 @@ final class AssetWriterCoordinator: SampleConsuming, @unchecked Sendable {
     /// Set once the first video sample has defined the session clock.
     private var sessionStartTime: CMTime?
     private var droppedFrames = 0
+    private var audioAppendFailures = 0
     private var lastVideoSampleAt: Date?
     private var writeFailure: String?
     private var isFinishing = false
@@ -147,7 +150,7 @@ final class AssetWriterCoordinator: SampleConsuming, @unchecked Sendable {
     /// A consistent snapshot for the recording HUD — and the poll that `RecordingSession`'s
     /// ticker uses to notice a dead writer.
     var stats: WriterStats {
-        let snapshot = queue.sync { () -> (Int, Date?, String?) in
+        let snapshot = queue.sync { () -> (Int, Int, Date?, String?) in
             // Ask the writer directly, every time. Latching on a rejected `append` alone is
             // not enough: `AVAssetWriter` can enter `.failed` on its own — the volume goes
             // away, the disk fills — while nothing is being appended at all. A still screen
@@ -155,7 +158,7 @@ final class AssetWriterCoordinator: SampleConsuming, @unchecked Sendable {
             // audio, so a recording can sit for hours over a writer that died in minute one
             // and still show "recording" the whole time.
             latchIfWriterFailed()
-            return (droppedFrames, lastVideoSampleAt, writeFailure)
+            return (droppedFrames, audioAppendFailures, lastVideoSampleAt, writeFailure)
         }
         // Queried outside the lock: the file system is the source of truth for size, and
         // this must not contend with sample appends.
@@ -164,8 +167,9 @@ final class AssetWriterCoordinator: SampleConsuming, @unchecked Sendable {
         return WriterStats(
             bytesWritten: size,
             droppedFrames: snapshot.0,
-            lastVideoSampleAt: snapshot.1,
-            writeFailure: snapshot.2
+            audioAppendFailures: snapshot.1,
+            lastVideoSampleAt: snapshot.2,
+            writeFailure: snapshot.3
         )
     }
 
@@ -315,10 +319,10 @@ final class AssetWriterCoordinator: SampleConsuming, @unchecked Sendable {
         guard CMTimeCompare(presentationTime, sessionStartTime) >= 0 else { return }
         guard CMSampleBufferDataIsReady(sampleBuffer), input.isReadyForMoreMediaData else { return }
         if !input.append(sampleBuffer) {
-            // Deliberately not counted as a dropped frame: `droppedFrames` is the video
-            // metric the HUD shows. A rejected audio buffer costs a few milliseconds of
-            // sound and must never cost the picture, so unless the writer itself has
-            // failed — which `latchIfWriterFailed` checks — the recording carries on.
+            // This remains separate from the video-drop metric: a rejected audio buffer
+            // must never cost the picture or change the recording state, but it should be
+            // visible to the user as a reliability signal.
+            audioAppendFailures += 1
             latchIfWriterFailed()
         }
     }

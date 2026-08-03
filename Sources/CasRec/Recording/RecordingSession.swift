@@ -427,6 +427,7 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
             startedAt: startedAt,
             bytesWritten: stats.bytesWritten,
             droppedFrames: stats.droppedFrames,
+            audioAppendFailures: stats.audioAppendFailures,
             isStalled: Date().timeIntervalSince(lastActivity) > Self.stallThreshold,
             diskWarning: diskWarning
         )

@@ -81,7 +81,8 @@ struct MainView: View {
 
             LibraryView(
                 directory: settings.destinationDirectory,
-                refreshToken: libraryRefreshToken
+                refreshToken: libraryRefreshToken,
+                allowsDeletion: !isRecording && !isTransitioning
             )
             .tabItem {
                 Label("ライブラリ", systemImage: "film.stack")

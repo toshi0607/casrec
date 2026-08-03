@@ -6,6 +6,7 @@ import SwiftUI
 struct LibraryView: View {
     let directory: URL
     let refreshToken: Int
+    let allowsDeletion: Bool
 
     @State private var entries: [LibraryEntry] = []
     @State private var entryToDelete: LibraryEntry?
@@ -34,7 +35,7 @@ struct LibraryView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List(entries) { entry in
-                    LibraryRow(entry: entry) {
+                    LibraryRow(entry: entry, allowsDeletion: allowsDeletion) {
                         QuickLookPreviewer.shared.show(entry.url)
                     } showInFinder: {
                         NSWorkspace.shared.activateFileViewerSelecting([entry.url])
@@ -48,7 +49,7 @@ struct LibraryView: View {
                 .listStyle(.inset)
             }
         }
-        .task(id: refreshToken) {
+        .task(id: "\(directory.path(percentEncoded: false))-\(refreshToken)") {
             await reload()
         }
         .alert("録画をゴミ箱に移動しますか？", isPresented: Binding(
@@ -83,13 +84,21 @@ struct LibraryView: View {
         entryToDelete = nil
         let sidecar = entry.url.appendingPathExtension(RecordingArtifacts.sidecarExtension)
         let items = [entry.url] + (FileManager.default.fileExists(atPath: sidecar.path(percentEncoded: false)) ? [sidecar] : [])
-        NSWorkspace.shared.recycle(items)
-        Task { await reload() }
+        NSWorkspace.shared.recycle(items) { _, error in
+            Task { @MainActor in
+                if let error {
+                    errorMessage = "\(entry.fileName) をゴミ箱に移動できませんでした: \(error.localizedDescription)"
+                } else {
+                    await reload()
+                }
+            }
+        }
     }
 }
 
 private struct LibraryRow: View {
     let entry: LibraryEntry
+    let allowsDeletion: Bool
     let quickLook: () -> Void
     let showInFinder: () -> Void
     let delete: () -> Void
@@ -124,6 +133,7 @@ private struct LibraryRow: View {
                 Button("Finderで表示", action: showInFinder)
                 Divider()
                 Button("ゴミ箱に移動", role: .destructive, action: delete)
+                    .disabled(!allowsDeletion)
             } label: {
                 Image(systemName: "ellipsis.circle")
             }

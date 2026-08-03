@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import ImageIO
 
 /// A display-ready recording or conversion output found directly in the configured
 /// directory.  Sidecars are intentionally not entries; they only annotate their media.
@@ -22,6 +23,9 @@ struct LibraryEntry: Identifiable, Equatable {
     var durationText: String {
         guard let duration, duration.isFinite, duration >= 0 else { return "—" }
         let seconds = Int(duration.rounded(.down))
+        if seconds >= 3_600 {
+            return String(format: "%d:%02d:%02d", seconds / 3_600, (seconds % 3_600) / 60, seconds % 60)
+        }
         return String(format: "%02d:%02d", seconds / 60, seconds % 60)
     }
 
@@ -95,9 +99,26 @@ struct LibraryScanner {
     }
 
     private static func duration(of url: URL) async -> TimeInterval? {
-        guard url.pathExtension.lowercased() != "gif" else { return nil }
+        if url.pathExtension.lowercased() == "gif" {
+            return gifDuration(of: url)
+        }
         let asset = AVURLAsset(url: url)
         guard let duration = try? await asset.load(.duration), duration.isNumeric else { return nil }
         return duration.seconds
+    }
+
+    private static func gifDuration(of url: URL) -> TimeInterval? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        let duration = (0..<CGImageSourceGetCount(source)).reduce(0.0) { total, index in
+            guard let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any],
+                  let gif = properties[kCGImagePropertyGIFDictionary] as? [CFString: Any] else {
+                return total
+            }
+            let delay = (gif[kCGImagePropertyGIFUnclampedDelayTime] as? NSNumber)?.doubleValue
+                ?? (gif[kCGImagePropertyGIFDelayTime] as? NSNumber)?.doubleValue
+                ?? 0
+            return total + delay
+        }
+        return duration > 0 ? duration : nil
     }
 }

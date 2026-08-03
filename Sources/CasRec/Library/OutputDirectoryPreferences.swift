@@ -87,6 +87,18 @@ struct OutputDirectoryPreferences {
         ), isDirectory.boolValue else {
             return false
         }
-        return fileManager.isWritableFile(atPath: directory.path(percentEncoded: false))
+        guard fileManager.isWritableFile(atPath: directory.path(percentEncoded: false)) else {
+            return false
+        }
+        let probe = directory.appending(path: ".casrec-write-check-\(UUID().uuidString)", directoryHint: .notDirectory)
+        guard fileManager.createFile(atPath: probe.path(percentEncoded: false), contents: Data()) else {
+            return false
+        }
+        do {
+            try fileManager.removeItem(at: probe)
+            return true
+        } catch {
+            return false
+        }
     }
 }

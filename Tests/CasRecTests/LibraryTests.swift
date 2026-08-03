@@ -10,9 +10,11 @@ struct LibraryTests {
         defer { directory.remove() }
         let older = directory.url.appending(path: "older.mov", directoryHint: .notDirectory)
         let newer = directory.url.appending(path: "newer.mp4", directoryHint: .notDirectory)
+        let gif = directory.url.appending(path: "converted.gif", directoryHint: .notDirectory)
         let image = directory.url.appending(path: "ignored.png", directoryHint: .notDirectory)
         try Data([0]).write(to: older)
         try Data([0, 1]).write(to: newer)
+        try Data([0]).write(to: gif)
         try Data([0]).write(to: image)
         try FileManager.default.setAttributes(
             [.modificationDate: Date(timeIntervalSinceReferenceDate: 10)],
@@ -22,11 +24,15 @@ struct LibraryTests {
             [.modificationDate: Date(timeIntervalSinceReferenceDate: 20)],
             ofItemAtPath: newer.path(percentEncoded: false)
         )
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceReferenceDate: 15)],
+            ofItemAtPath: gif.path(percentEncoded: false)
+        )
 
         let entries = await LibraryScanner().scan(directory: directory.url)
 
-        #expect(entries.map(\.fileName) == ["newer.mp4", "older.mov"])
-        #expect(entries.map(\.fileSize) == [2, 1])
+        #expect(entries.map(\.fileName) == ["newer.mp4", "converted.gif", "older.mov"])
+        #expect(entries.map(\.fileSize) == [2, 1, 1])
     }
 
     @Test("Library scan marks a matching recording sidecar as unfinalized")
@@ -65,5 +71,14 @@ struct LibraryTests {
 
         #expect(entry.durationText == "01:05")
         #expect(!entry.fileSizeText.isEmpty)
+
+        let longEntry = LibraryEntry(
+            url: URL(filePath: "/tmp/long.mov"),
+            createdAt: .now,
+            duration: 3_661,
+            fileSize: 0,
+            isUnfinalized: false
+        )
+        #expect(longEntry.durationText == "1:01:01")
     }
 }

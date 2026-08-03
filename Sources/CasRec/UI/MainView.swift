@@ -20,6 +20,10 @@ struct MainView: View {
 
     @State private var settings = RecordingSettings.default
     @State private var captureMode: CaptureSourceKind = .window
+    @State private var cropPreview: CapturePreview?
+    @State private var cropPreviewSourceID: String?
+    @State private var cropPixelSize: CGSize?
+    @State private var isLoadingCropPreview = false
 
     @State private var errorMessage: String?
     @State private var showingError = false
@@ -68,6 +72,7 @@ struct MainView: View {
             ScrollView {
                 VStack(spacing: 16) {
                     sourceSelectionSection
+                    cropSelectionSection
                     audioSettingsSection
                     captureSettingsSection
                     savePathSection
@@ -101,6 +106,13 @@ struct MainView: View {
             guard isPollingSources else { return }
             await observeSources()
         }
+        .sheet(item: $cropPreview) { preview in
+            CropSelectionSheet(preview: preview) { rect, pixelSize in
+                guard cropPreviewSourceID == selectedSourceId else { return }
+                settings.sourceCropRect = rect
+                cropPixelSize = pixelSize
+            }
+        }
     }
 
     private var sourceSelectionSection: some View {
@@ -133,6 +145,38 @@ struct MainView: View {
                 sources: visibleSources,
                 selectedSourceId: $selectedSourceId
             )
+            .onChange(of: selectedSourceId) {
+                clearCrop()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var cropSelectionSection: some View {
+        if captureMode == .window {
+            HStack(spacing: 10) {
+                Button(isLoadingCropPreview ? "領域を準備中…" : "領域を選択") {
+                    Task {
+                        await showCropSelector()
+                    }
+                }
+                .disabled(selectedSource == nil || isRecording || isTransitioning || isLoadingCropPreview)
+
+                if let cropPixelSize {
+                    Text("領域: \(Int(cropPixelSize.width))×\(Int(cropPixelSize.height))")
+                        .font(.caption)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.accentColor.opacity(0.12))
+                        .clipShape(Capsule())
+
+                    Button("クリア") {
+                        clearCrop()
+                    }
+                }
+
+                Spacer()
+            }
         }
     }
 
@@ -371,6 +415,26 @@ struct MainView: View {
             }
             syncSelection()
         }
+    }
+
+    private func showCropSelector() async {
+        guard let source = selectedSource, source.kind == .window else { return }
+        isLoadingCropPreview = true
+        defer { isLoadingCropPreview = false }
+        do {
+            let preview = try await captureService.capturePreview(for: source)
+            guard selectedSourceId == source.id else { return }
+            cropPreviewSourceID = source.id
+            cropPreview = preview
+        } catch {
+            errorMessage = "領域選択用の画面を取得できませんでした: \(error.localizedDescription)"
+            showingError = true
+        }
+    }
+
+    private func clearCrop() {
+        settings.sourceCropRect = nil
+        cropPixelSize = nil
     }
 
     /// Keeps `selectedSourceId` pointing at something the user can actually see: the first

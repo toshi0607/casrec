@@ -81,6 +81,10 @@ final class FakeCaptureService: CaptureServicing, @unchecked Sendable {
         AsyncStream { $0.finish() }
     }
 
+    func capturePreview(for source: CaptureSource) async throws -> CapturePreview {
+        throw FakeCaptureError.startRefused
+    }
+
     func startCapture(source: CaptureSource, settings: RecordingSettings, sink: any SampleConsuming) async throws {
         let error = state.withLock { current -> Error? in
             current.startCalls += 1

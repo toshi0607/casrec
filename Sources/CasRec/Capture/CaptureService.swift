@@ -67,6 +67,33 @@ final class CaptureService: CaptureServicing, @unchecked Sendable {
         }
     }
 
+    func capturePreview(for source: CaptureSource) async throws -> CapturePreview {
+        guard source.kind == .window, let window = source.scWindow else {
+            throw CaptureServiceError.sourceUnavailable
+        }
+
+        let filter = SCContentFilter(desktopIndependentWindow: window)
+        let contentSize = filter.contentRect.size.width > 0 && filter.contentRect.size.height > 0
+            ? filter.contentRect.size
+            : source.frame.size
+        let scale = Self.resolvedPixelScale(filter: filter, source: source)
+        let outputSize = CaptureDimensions.outputSize(
+            contentSize: contentSize,
+            pointPixelScale: scale,
+            scalePercent: 100
+        )
+        let configuration = SCStreamConfiguration()
+        configuration.width = outputSize.width
+        configuration.height = outputSize.height
+        configuration.showsCursor = false
+
+        let image = try await SCScreenshotManager.captureImage(
+            contentFilter: filter,
+            configuration: configuration
+        )
+        return CapturePreview(image: image, contentSize: contentSize)
+    }
+
     func startCapture(source: CaptureSource, settings: RecordingSettings, sink: any SampleConsuming) async throws {
         // Restarting mid-flight is treated as "replace the active capture" rather
         // than an error; `RecordingSessionControlling`'s state machine is what
@@ -74,7 +101,7 @@ final class CaptureService: CaptureServicing, @unchecked Sendable {
         await stopActiveStream()
 
         let filter = try await Self.makeFilter(for: source)
-        let configuration = Self.makeConfiguration(source: source, filter: filter, settings: settings)
+        let configuration = try Self.makeConfiguration(source: source, filter: filter, settings: settings)
 
         let generation = withLock { () -> Int in
             activeGeneration += 1
@@ -182,14 +209,29 @@ final class CaptureService: CaptureServicing, @unchecked Sendable {
         source: CaptureSource,
         filter: SCContentFilter,
         settings: RecordingSettings
-    ) -> SCStreamConfiguration {
+    ) throws -> SCStreamConfiguration {
         let configuration = SCStreamConfiguration()
 
         let scale = resolvedPixelScale(filter: filter, source: source)
-        let nativeSize = nativePixelSize(filter: filter, source: source, scale: scale)
-        let percent = CGFloat(settings.scalePercent) / 100.0
-        configuration.width = evenPixelCount(nativeSize.width * percent)
-        configuration.height = evenPixelCount(nativeSize.height * percent)
+        let contentSize = contentSize(filter: filter, source: source)
+        let cropRect: CGRect?
+        if let sourceCropRect = settings.sourceCropRect {
+            guard source.kind == .window,
+                  let validCrop = CropGeometry.clampedContentRect(sourceCropRect, contentSize: contentSize) else {
+                throw CaptureServiceError.invalidCrop
+            }
+            cropRect = validCrop
+            configuration.sourceRect = validCrop
+        } else {
+            cropRect = nil
+        }
+        let outputSize = CaptureDimensions.outputSize(
+            contentSize: cropRect?.size ?? contentSize,
+            pointPixelScale: scale,
+            scalePercent: settings.scalePercent
+        )
+        configuration.width = outputSize.width
+        configuration.height = outputSize.height
 
         configuration.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(settings.fps))
         // Bi-planar 4:2:0 is what the HEVC/H.264 encoders want: half the bytes per pixel of
@@ -220,29 +262,13 @@ final class CaptureService: CaptureServicing, @unchecked Sendable {
         return fallbackPixelScale(for: source)
     }
 
-    /// Native pixel size of what the filter will actually deliver.
-    ///
-    /// `SCContentFilter.contentRect` is the authority here, not `source.frame`: the source
-    /// list is up to two seconds old, so a window resized just before recording started
-    /// would otherwise be captured at its previous size and letterboxed for the whole
-    /// session. `contentRect` is in points; `scale` converts it to pixels.
-    private static func nativePixelSize(
-        filter: SCContentFilter,
-        source: CaptureSource,
-        scale: CGFloat
-    ) -> (width: CGFloat, height: CGFloat) {
+    /// Content size of what the filter will actually deliver. `contentRect` is the
+    /// authority here, not the up-to-two-seconds-old source-list frame.
+    private static func contentSize(filter: SCContentFilter, source: CaptureSource) -> CGSize {
         let contentSize = filter.contentRect.size
         // Only if ScreenCaptureKit has no rect to give (a source that vanished between
         // enumeration and here) is the stale frame better than nothing.
-        let size = contentSize.width > 0 && contentSize.height > 0 ? contentSize : source.frame.size
-        return (size.width * scale, size.height * scale)
-    }
-
-    /// Rounds up to an even pixel count — HEVC/H.264 encoders require even
-    /// dimensions, and `settings.scalePercent` (e.g. 50%) can otherwise land on odd.
-    private static func evenPixelCount(_ raw: CGFloat) -> Int {
-        let value = max(2, Int(raw.rounded()))
-        return value.isMultiple(of: 2) ? value : value + 1
+        return contentSize.width > 0 && contentSize.height > 0 ? contentSize : source.frame.size
     }
 
     /// Honest fallback when `SCContentFilter.pointPixelScale` isn't available:
@@ -312,9 +338,15 @@ final class CaptureService: CaptureServicing, @unchecked Sendable {
 
 private enum CaptureServiceError: Error, LocalizedError {
     case sourceUnavailable
+    case invalidCrop
 
     var errorDescription: String? {
-        "The selected capture source is no longer available."
+        switch self {
+        case .sourceUnavailable:
+            "The selected capture source is no longer available."
+        case .invalidCrop:
+            "The selected crop is no longer within the window's content area."
+        }
     }
 }
 

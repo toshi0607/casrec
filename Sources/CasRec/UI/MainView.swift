@@ -9,6 +9,7 @@ struct MainView: View {
 
     let session: any RecordingSessionControlling
     let captureService: any CaptureServicing
+    let scheduler: RecordingScheduler
 
     @State private var currentState: RecordingState = .idle
     @State private var sources: [CaptureSource] = []
@@ -27,11 +28,26 @@ struct MainView: View {
     @State private var cropPreviewSourceID: String?
     @State private var cropPixelSize: CGSize?
     @State private var isLoadingCropPreview = false
+    @State private var scheduledStartAt = Date().addingTimeInterval(10 * 60)
+    @State private var scheduledMaximumDuration: RecordingDurationLimit = .none
+    @State private var scheduledRecording: ScheduledRecording?
+    @State private var scheduleBannerMessage: String?
+    @State private var scheduledSleepActivity: NSObjectProtocol?
 
     @State private var errorMessage: String?
     @State private var showingError = false
 
     private let outputDirectoryPreferences = OutputDirectoryPreferences()
+
+    init(
+        session: any RecordingSessionControlling,
+        captureService: any CaptureServicing,
+        scheduler: RecordingScheduler
+    ) {
+        self.session = session
+        self.captureService = captureService
+        self.scheduler = scheduler
+    }
 
     var isRecording: Bool {
         if case .recording = currentState {
@@ -97,6 +113,12 @@ struct MainView: View {
             guard isPollingSources else { return }
             await observeSources()
         }
+        .task {
+            await observeScheduledRecording()
+        }
+        .task {
+            await observeScheduleEvents()
+        }
         .sheet(item: $cropPreview) { preview in
             CropSelectionSheet(
                 preview: preview,
@@ -118,6 +140,7 @@ struct MainView: View {
                     audioSettingsSection
                     captureSettingsSection
                     savePathSection
+                    scheduleSection
                 }
                 .padding(16)
             }
@@ -352,6 +375,67 @@ struct MainView: View {
         }
     }
 
+    private var scheduleSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("予約")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            if let scheduledRecording {
+                TimelineView(.periodic(from: .now, by: 60)) { _ in
+                    let remainingMinutes = max(0, Int(ceil(scheduledRecording.startAt.timeIntervalSinceNow / 60)))
+                    HStack {
+                        Text("予約済み: \(scheduledRecording.startAt, format: .dateTime.hour().minute()) 開始 (あと\(remainingMinutes)分)")
+                            .font(.caption)
+                        Spacer()
+                        Button("キャンセル") {
+                            Task {
+                                await scheduler.cancel()
+                            }
+                        }
+                    }
+                }
+            } else {
+                HStack(spacing: 12) {
+                    DatePicker("開始時刻", selection: $scheduledStartAt)
+                        .labelsHidden()
+
+                    Picker("録画時間の上限", selection: $scheduledMaximumDuration) {
+                        ForEach(RecordingDurationLimit.allCases) { limit in
+                            Text(limit.label).tag(limit)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    Button("予約する") {
+                        Task {
+                            await scheduleRecording()
+                        }
+                    }
+                    .disabled(selectedSource == nil)
+                }
+            }
+
+            if let scheduleBannerMessage {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                    Text(scheduleBannerMessage)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+                .background(Color.orange.opacity(0.1))
+                .cornerRadius(6)
+            }
+
+            Text("予約はアプリ起動中のみ有効です。アプリを終了すると消えます。")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+        }
+    }
+
     private var recordingControlSection: some View {
         VStack(spacing: 12) {
             if isRecording {
@@ -470,6 +554,40 @@ struct MainView: View {
         }
     }
 
+    /// The reservation must keep the Mac awake while it is waiting: if idle system sleep
+    /// wins first, the process cannot fire the recording at the requested wall-clock time.
+    private func observeScheduledRecording() async {
+        let stream = await scheduler.observeReservation()
+        for await reservation in stream {
+            scheduledRecording = reservation
+            updateScheduledSleepActivity(isScheduled: reservation != nil)
+        }
+    }
+
+    private func observeScheduleEvents() async {
+        let stream = await scheduler.observeEvents()
+        for await event in stream {
+            switch event {
+            case .skippedBecauseSessionWasNotIdle:
+                scheduleBannerMessage = "予約時刻になりましたが、録画状態が待機中ではないため開始しませんでした。"
+            case .couldNotStart(let message):
+                scheduleBannerMessage = message
+            }
+        }
+    }
+
+    private func updateScheduledSleepActivity(isScheduled: Bool) {
+        if isScheduled, scheduledSleepActivity == nil {
+            scheduledSleepActivity = ProcessInfo.processInfo.beginActivity(
+                options: [.idleSystemSleepDisabled],
+                reason: "Keep CasRec awake until its scheduled recording starts."
+            )
+        } else if !isScheduled, let scheduledSleepActivity {
+            ProcessInfo.processInfo.endActivity(scheduledSleepActivity)
+            self.scheduledSleepActivity = nil
+        }
+    }
+
     private func showCropSelector() async {
         guard let source = selectedSource, source.kind == .window else { return }
         isLoadingCropPreview = true
@@ -512,6 +630,37 @@ struct MainView: View {
         await session.start(source: source, settings: settings)
     }
 
+    private func scheduleRecording() async {
+        refreshOutputDirectory()
+        guard outputDirectoryPreferences.isUsable(settings.destinationDirectory) else {
+            scheduleBannerMessage = "保存先を利用できません。保存先を変更してから予約してください。"
+            return
+        }
+        guard let source = selectedSource else { return }
+
+        scheduleBannerMessage = nil
+        let reservation = ScheduledRecording(
+            startAt: scheduledStartAt,
+            source: source,
+            settings: settings,
+            maximumDuration: scheduledMaximumDuration.duration
+        )
+        await scheduler.schedule(
+            reservation,
+            stateProvider: { await recordingState(of: session) },
+            start: { reservation in
+                await startScheduledRecording(
+                    reservation,
+                    captureService: captureService,
+                    session: session
+                )
+            },
+            stop: {
+                await session.stop()
+            }
+        )
+    }
+
     private func refreshOutputDirectory() {
         let resolution = outputDirectoryPreferences.load()
         settings.destinationDirectory = resolution.directory
@@ -536,5 +685,76 @@ struct MainView: View {
         settings.destinationDirectory = directory
         outputDirectoryWarning = nil
         libraryRefreshToken += 1
+    }
+}
+
+private enum RecordingDurationLimit: CaseIterable, Identifiable {
+    case none
+    case thirtyMinutes
+    case oneHour
+    case twoHours
+    case threeHours
+
+    var id: Self { self }
+
+    var duration: TimeInterval? {
+        switch self {
+        case .none: nil
+        case .thirtyMinutes: 30 * 60
+        case .oneHour: 60 * 60
+        case .twoHours: 2 * 60 * 60
+        case .threeHours: 3 * 60 * 60
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .none: "録画時間の上限: なし"
+        case .thirtyMinutes: "録画時間の上限: 30分"
+        case .oneHour: "録画時間の上限: 1時間"
+        case .twoHours: "録画時間の上限: 2時間"
+        case .threeHours: "録画時間の上限: 3時間"
+        }
+    }
+}
+
+private func recordingState(of session: any RecordingSessionControlling) async -> RecordingState {
+    for await state in session.observeState() {
+        return state
+    }
+    return .idle
+}
+
+/// `observeSources()` starts a new ScreenCaptureKit enumeration for every subscriber, so
+/// this deliberately uses a fresh stream at firing time rather than the UI's last poll.
+private func startScheduledRecording(
+    _ reservation: ScheduledRecording,
+    captureService: any CaptureServicing,
+    session: any RecordingSessionControlling
+) async -> ScheduledRecordingStartResult {
+    for await update in captureService.observeSources() {
+        switch update {
+        case .sources(let sources):
+            guard let source = CaptureSourceResolver.resolve(saved: reservation.source, in: sources) else {
+                return .couldNotStart(message: "予約時の録画対象が見つからないため、録画を開始しませんでした。")
+            }
+            guard await recordingState(of: session) == .idle else {
+                return .couldNotStart(message: "予約時刻になりましたが、録画状態が待機中ではないため開始しませんでした。")
+            }
+            await session.start(source: source, settings: reservation.settings)
+            return .started
+        case .unavailable(let reason):
+            return .couldNotStart(message: "録画対象を再取得できないため、録画を開始しませんでした: \(scheduleSourceErrorMessage(reason))")
+        }
+    }
+    return .couldNotStart(message: "録画対象を再取得できないため、録画を開始しませんでした。")
+}
+
+private func scheduleSourceErrorMessage(_ reason: CaptureUnavailableReason) -> String {
+    switch reason {
+    case .permissionDenied:
+        "画面収録が許可されていません"
+    case .failed(let message):
+        message
     }
 }

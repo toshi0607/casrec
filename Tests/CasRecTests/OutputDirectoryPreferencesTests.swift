@@ -42,4 +42,37 @@ struct OutputDirectoryPreferencesTests {
 
         #expect(resolution == OutputDirectoryResolution(directory: fallback, didFallback: true))
     }
+
+    @Test("Filesystem validation accepts writable directories and rejects missing ones")
+    func filesystemValidationChecksDirectoryExistenceAndWriteProbe() throws {
+        let directory = TempDirectory()
+        defer { directory.remove() }
+        let preferences = OutputDirectoryPreferences(fallbackDirectory: directory.url)
+        let missing = directory.url.appending(path: "missing", directoryHint: .isDirectory)
+
+        #expect(preferences.isUsable(directory.url))
+        #expect(!preferences.isUsable(missing))
+    }
+
+    @Test("Filesystem validation rejects a directory without write permission")
+    func filesystemValidationRejectsUnwritableDirectory() throws {
+        let directory = TempDirectory()
+        defer { directory.remove() }
+        let protectedDirectory = directory.url.appending(path: "read-only", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: protectedDirectory, withIntermediateDirectories: false)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o500],
+            ofItemAtPath: protectedDirectory.path(percentEncoded: false)
+        )
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: protectedDirectory.path(percentEncoded: false)
+            )
+        }
+
+        let preferences = OutputDirectoryPreferences(fallbackDirectory: directory.url)
+
+        #expect(!preferences.isUsable(protectedDirectory))
+    }
 }

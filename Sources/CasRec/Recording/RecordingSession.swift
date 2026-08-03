@@ -268,13 +268,15 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
             artifacts?.removeSidecar()
             recordingRemains = true
         case .nothingRecorded:
-            recordingRemains = !(artifacts?.discardIfEmpty() ?? true)
+            let discarded = artifacts?.discardIfEmpty() ?? true
+            recordingRemains = Self.hasSavedRecording(artifacts, afterDiscardingEmpty: discarded)
         case .failed:
             // A .mov with fragments in it is kept, sidecar included — that pair is what the
             // repair flow looks for (§5.5). A failure that produced no bytes at all (an
             // encoder that never initialised) leaves nothing to repair, only a sidecar that
             // would masquerade as an unfinalized recording, so that pair goes.
-            recordingRemains = !(artifacts?.discardIfEmpty() ?? true)
+            let discarded = artifacts?.discardIfEmpty() ?? true
+            recordingRemains = Self.hasSavedRecording(artifacts, afterDiscardingEmpty: discarded)
         }
 
         // The session is over; nothing is left for these to observe. Claimed now rather
@@ -374,6 +376,16 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
         recordingRemains
             ? "\nそこまでの録画は保存されています。"
             : "\n録画ファイルを保存できませんでした。"
+    }
+
+    /// A failed attempt to remove a zero-byte placeholder must not be presented as a
+    /// partially saved recording. The removal result alone cannot tell those two cases
+    /// apart, so the on-disk byte count remains the authority.
+    private static func hasSavedRecording(
+        _ artifacts: RecordingArtifacts?,
+        afterDiscardingEmpty discarded: Bool
+    ) -> Bool {
+        !discarded && (artifacts?.bytesWritten ?? 0) > 0
     }
 
     // MARK: - Progress

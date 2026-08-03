@@ -15,6 +15,39 @@ struct CropGeometryTests {
         #expect(rect == CGRect(x: 300, y: 40, width: 600, height: 200))
     }
 
+    @Test("Content crops round-trip through preview pixels")
+    func roundTripsContentCropThroughPreviewPixels() {
+        let original = CGRect(x: 240, y: 80, width: 720, height: 240)
+        let previewPixelSize = CGSize(width: 3_000, height: 1_200)
+        let contentSize = CGSize(width: 1_500, height: 400)
+
+        let preview = CropGeometry.previewRect(
+            from: original,
+            previewPixelSize: previewPixelSize,
+            contentSize: contentSize
+        )
+        let restored = preview.flatMap {
+            CropGeometry.contentRect(
+                from: $0,
+                previewPixelSize: previewPixelSize,
+                contentSize: contentSize
+            )
+        }
+
+        #expect(restored == original)
+    }
+
+    @Test("An out-of-bounds content crop has no preview selection")
+    func rejectsOutOfBoundsContentCropForPreview() {
+        let preview = CropGeometry.previewRect(
+            from: CGRect(x: 900, y: 100, width: 200, height: 100),
+            previewPixelSize: CGSize(width: 2_000, height: 1_000),
+            contentSize: CGSize(width: 1_000, height: 500)
+        )
+
+        #expect(preview == nil)
+    }
+
     @Test("A selection is clamped to the screenshot before converting")
     func clampsPreviewSelection() {
         let rect = CropGeometry.contentRect(

@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show Swift version
+        run: swift --version
+      - name: Build without warnings
+        run: swift build -Xswiftc -warnings-as-errors
+      - name: Run tests
+        run: |
+          set -o pipefail
+          make test | tee test-output.log
+      - name: Verify tests were executed
+        run: |
+          if ! grep -Eq 'Test run with [1-9][0-9]* tests' test-output.log; then
+            echo "Swift Testing did not report any executed tests."
+            exit 1
+          fi

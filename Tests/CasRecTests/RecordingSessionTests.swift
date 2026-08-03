@@ -80,6 +80,7 @@ struct RecordingSessionTests {
             return
         }
         #expect(message.contains("SCStreamErrorDomain#-3811"), "the cause must survive into the UI")
+        #expect(!message.contains("保存されています"), "an empty recording must not be presented as saved")
     }
 
     // MARK: - failed -> idle

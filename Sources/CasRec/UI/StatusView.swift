@@ -89,6 +89,18 @@ struct StatusView: View {
                         .font(.system(.body, design: .monospaced))
                 }
 
+                if progress.audioAppendFailures > 0 {
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Audio Failures")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("\(progress.audioAppendFailures)")
+                            .font(.system(.body, design: .monospaced))
+                    }
+                }
+
                 Spacer()
             }
             .font(.system(.caption, design: .monospaced))

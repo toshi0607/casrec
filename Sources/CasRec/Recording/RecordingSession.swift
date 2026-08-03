@@ -260,19 +260,23 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
         // the failure this whole layer exists to prevent (§5.4).
         guards.stop()
 
+        let recordingRemains: Bool
         switch result {
         case .finalized:
             // The sidecar means "not finalized"; the file now is, whatever ended the
             // session, so the badge must not linger on a healthy recording (§5.5).
             artifacts?.removeSidecar()
+            recordingRemains = true
         case .nothingRecorded:
-            artifacts?.discardIfEmpty()
+            let discarded = artifacts?.discardIfEmpty() ?? true
+            recordingRemains = Self.hasSavedRecording(artifacts, afterDiscardingEmpty: discarded)
         case .failed:
             // A .mov with fragments in it is kept, sidecar included — that pair is what the
             // repair flow looks for (§5.5). A failure that produced no bytes at all (an
             // encoder that never initialised) leaves nothing to repair, only a sidecar that
             // would masquerade as an unfinalized recording, so that pair goes.
-            artifacts?.discardIfEmpty()
+            let discarded = artifacts?.discardIfEmpty() ?? true
+            recordingRemains = Self.hasSavedRecording(artifacts, afterDiscardingEmpty: discarded)
         }
 
         // The session is over; nothing is left for these to observe. Claimed now rather
@@ -293,7 +297,11 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
             observer.cancel()
         }
 
-        if let message = Self.failureMessage(reason: reason, result: result) {
+        if let message = Self.failureMessage(
+            reason: reason,
+            result: result,
+            recordingRemains: recordingRemains
+        ) {
             fail(message: message, from: .finishing)
         } else {
             state.withLock { current in
@@ -326,6 +334,7 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
             }
             let deadline = Task {
                 try? await Task.sleep(for: Self.stopCaptureTimeout)
+                guard !Task.isCancelled else { return }
                 continuation.yield(false)
             }
             var stopped = false
@@ -343,20 +352,40 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
     }
 
     /// `nil` when the session ended normally; otherwise what the user needs to be told.
-    private static func failureMessage(reason: EndReason, result: RecordingFinishResult) -> String? {
+    private static func failureMessage(
+        reason: EndReason,
+        result: RecordingFinishResult,
+        recordingRemains: Bool
+    ) -> String? {
         if case .failed(let message) = result {
-            return "録画の保存中にエラーが発生しました: \(message)\n書き込み済みの部分はライブラリに残っています。"
+            return "録画の保存中にエラーが発生しました: \(message)\(recordingAvailabilityMessage(recordingRemains))"
         }
         switch reason {
         case .manual, .sourceEnded:
             return nil
         case .streamFailed(let message):
-            return "画面キャプチャが停止しました: \(message)\nそこまでの録画は保存されています。"
+            return "画面キャプチャが停止しました: \(message)\(recordingAvailabilityMessage(recordingRemains))"
         case .diskCritical:
-            return "ディスクの空き容量が2GB未満になったため録画を停止しました。そこまでの録画は保存されています。"
+            return "ディスクの空き容量が2GB未満になったため録画を停止しました。\(recordingAvailabilityMessage(recordingRemains))"
         case .writeFailed(let message):
-            return "録画ファイルへの書き込みができなくなったため停止しました: \(message)\nそこまでの録画は保存されています。"
+            return "録画ファイルへの書き込みができなくなったため停止しました: \(message)\(recordingAvailabilityMessage(recordingRemains))"
         }
+    }
+
+    private static func recordingAvailabilityMessage(_ recordingRemains: Bool) -> String {
+        recordingRemains
+            ? "\nそこまでの録画は保存されています。"
+            : "\n録画ファイルを保存できませんでした。"
+    }
+
+    /// A failed attempt to remove a zero-byte placeholder must not be presented as a
+    /// partially saved recording. The removal result alone cannot tell those two cases
+    /// apart, so the on-disk byte count remains the authority.
+    private static func hasSavedRecording(
+        _ artifacts: RecordingArtifacts?,
+        afterDiscardingEmpty discarded: Bool
+    ) -> Bool {
+        !discarded && (artifacts?.bytesWritten ?? 0) > 0
     }
 
     // MARK: - Progress
@@ -411,6 +440,7 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
             startedAt: startedAt,
             bytesWritten: stats.bytesWritten,
             droppedFrames: stats.droppedFrames,
+            audioAppendFailures: stats.audioAppendFailures,
             isStalled: Date().timeIntervalSince(lastActivity) > Self.stallThreshold,
             diskWarning: diskWarning
         )

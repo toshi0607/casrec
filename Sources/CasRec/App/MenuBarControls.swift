@@ -27,9 +27,6 @@ struct MenuBarControls: View {
                 NSApp.terminate(nil)
             }
         }
-        .onChange(of: controls.mainWindowRequest) {
-            showMainWindow()
-        }
     }
 
     @ViewBuilder

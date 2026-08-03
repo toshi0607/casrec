@@ -10,6 +10,7 @@ struct MainView: View {
     let session: any RecordingSessionControlling
     let captureService: any CaptureServicing
     @Bindable var controls: RecordingControls
+    @Environment(\.openWindow) private var openWindow
 
     @State private var sources: [CaptureSource] = []
     /// Non-nil while the source list cannot be read — most importantly when screen
@@ -105,6 +106,9 @@ struct MainView: View {
         }
         .onChange(of: currentState) { _, state in
             updateRecordingCompletion(state)
+        }
+        .onChange(of: controls.mainWindowRequest) {
+            showMainWindow()
         }
         .sheet(item: $cropPreview) { preview in
             CropSelectionSheet(
@@ -543,6 +547,13 @@ struct MainView: View {
             errorMessage = message
             showingError = true
         }
+    }
+
+    /// A MenuBarExtra's content only exists while its menu is open.  The application Window
+    /// scene remains the reliable observer for a hot-key failure that must reveal this view.
+    private func showMainWindow() {
+        openWindow(id: "main")
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func observeSources() async {

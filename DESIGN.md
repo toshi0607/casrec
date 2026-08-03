@@ -144,6 +144,7 @@ SCStream
 ```
 
 - コンテナ: **QuickTime (.mov)**、`movieFragmentInterval = 10秒` の fragmented .mov。クラッシュ・強制終了時にも直前のフラグメント境界まで復旧・再生できる可能性を高める。実際の再生可否は書き込み中断タイミングや再生側(QuickTime Player / AVFoundation / ffmpeg)の許容度に依存するため断定せず、Phase 2 の `kill -9` 試験で実挙動を検証し、§5.5 の救済導線で補完する。
+- **クラッシュ耐性は現時点で条件付き(既知の制約)**: 有効化した音声入力にサンプルが1件も届かない場合(音声入力ON+完全無音のアプリ等。既定は App Audio ON なので無音アプリで発生しうる)、fragmented .mov の復旧可能なプレフィックスが生成されないことが実測で判明している。音声サンプルが流れている通常の配信録画、または音声入力OFFの録画では有効。飢餓入力の扱い(タイムアウトでの `markAsFinished` 等)は R3/R8 と R6 のトレードオフを含むため Phase 2 で対処し、`kill -9` × 無音アプリを試験マトリクスに含める(§12)。
 - ビデオコーデック: **HEVC(ハードウェアエンコード)** 既定。1080p30で約4Mbps → 2時間 ≈ 3.6GB。互換性重視の H.264(8Mbps)も選択可。
 - オーディオ: AAC 48kHz ステレオ 160kbps。マイクは別トラック(audio2)を仮置きとするが、第2オーディオトラックを再生しないプレイヤーもあるため、**別トラック維持か1トラックへのミックスかはPhase 2(マイク実装時)に決める**。
 - フレーム健全性(R5)— `SCStreamFrameInfo` の status を次の方針で扱う:
@@ -237,12 +238,13 @@ SCStream
 | 画面収録(TCC) | 初回の `SCShareableContent` 取得時にOSが要求。未許可時は設定誘導UIを表示 |
 | マイク | `NSMicrophoneUsageDescription`。マイクトグル有効化時のみ要求 |
 | App Sandbox | **無効**(個人ビルド・非配布のため。ffmpeg起動やMovies配下書き込みが単純になる)。将来配布する場合は Sandbox 有効化・security-scoped bookmark・ffmpeg同梱または別導線・公証を再検討する |
-| 署名 | ローカルの開発証明書で固定。**署名が変わるとTCC許可がリセットされるため、ad-hoc署名でのビルドは避ける**(開発時の落とし穴) |
-| プロジェクト | Xcodeプロジェクト、単一Appターゲット。ディレクトリは§10 |
+| 署名 | 安定した署名でTCC許可を維持する(署名が変わると再許可が必要)。開発機に有効な証明書が無いため、まずad-hoc署名で開始し、TCC再許可の摩擦が確認された時点で自己署名のコード署名証明書を作成して固定する |
+| プロジェクト | SwiftPMパッケージ(executable)+ Makefileで.appバンドル生成(開発機にXcodeが無いため。導入時はPackage.swiftをXcodeで直接開ける)。ディレクトリは§10 |
 
 ## 9. 既知の制約(仕様として明記)
 
 - 対象ウィンドウの**最小化(⌘M)は映像が止まる**。背面に置くのはOK。運用: 録画対象は最小化せず背面へ。
+- 対象ウィンドウを**別Space(デスクトップ)に残して他のSpaceへ切り替えると、ソースアプリ側の描画抑制(Chromeのocclusion最適化等)により動画要素だけが黒くなることがある**(2026-08-03実測: ページUIと音声は継続、動画プレーヤー領域のみ黒)。フレーム自体は供給され続けるためdrops/stall検知には映らず、SCK側で回避・検知できない。運用: **対象ウィンドウは録画中のSpaceに置いたまま、同一Space内で背面に回す**。別Space追従はスコープ外とする(2026-08-03ユーザー判断)。
 - ブラウザの**タブ切り替えは、ウィンドウの表示内容ごと録画される**(映像は止まらないが、意図した配信内容が録れなくなる)。また**タブを閉じてもウィンドウ消滅とは扱われない**。運用: 録画対象は専用ウィンドウに分離し、録画中はそのウィンドウを操作しない。
 - 音声の分離単位は**アプリ(プロセス)であり、ウィンドウやタブではない**。同一ブラウザの別タブの音は混入しうる。運用: 録画専用のブラウザプロファイルまたは別ブラウザを使う。
 - 録画中の対象ウィンドウのリサイズは、開始時解像度へのスケーリング(レターボックス)になる。録画前にサイズを決める。
@@ -254,9 +256,12 @@ SCStream
 ```
 casrec/
 ├── DESIGN.md
-├── tasks/                  # todo.md / lessons.md(実装開始時に作成)
-└── CasRec/                 # Xcodeプロジェクト
+├── tasks/                  # todo.md / lessons.md
+├── Package.swift           # SwiftPM(executable CasRec、macOS 15+)
+├── Makefile                # build / bundle(.app生成+Info.plist+codesign)/ run
+└── Sources/CasRec/
     ├── App/                # エントリポイント、AppDelegate(終了ガード)
+    ├── Core/               # Contracts(層間の共有型・プロトコル)
     ├── Capture/            # CaptureService, ShareableContentProvider
     ├── Recording/          # RecordingSession, AssetWriterCoordinator, SessionGuards
     ├── PostProcess/        # Compressor, GifConverter, FfmpegLocator
@@ -266,13 +271,13 @@ casrec/
 
 ## 11. Assumption Ledger(実装時に検証)
 
-| 仮定 | 状態 | 検証方法 |
+| 仮定 | 状態 | 検証方法 / 実測結果 |
 |------|------|----------|
-| ウィンドウフィルタ時、音声はそのアプリ(プロセス)のみになる | UNVERIFIED | Phase 1で通知音・他アプリ音・同一ブラウザ別タブ音を鳴らして録画→混入範囲を実測 |
+| ウィンドウフィルタ時、音声はそのアプリ(プロセス)のみになる | VERIFIED (2026-08-03) | 実機: 録画中に他プロセスの通知音3回 → 非混入を確認。同一ブラウザ別タブ音の分離不能は仕様(§9)、実測は未 |
 | `movieFragmentInterval` 設定で `kill -9` 後もファイル再生可 | UNVERIFIED | Phase 2の完了条件(下記) |
-| 背面ウィンドウ・別Spaceのウィンドウでもフレーム更新される | UNVERIFIED | Phase 1完了条件の4状態試験(背面/別Space/フルスクリーン前面/Stage Manager)で実測 |
-| HEVCハードウェアエンコードで2時間録画してもメモリが安定 | UNVERIFIED | Phase 2で2時間実録、Activity Monitorで確認 |
-| macOS 26でのSCK API挙動が15と同等 | UNVERIFIED | 実装しながら確認(差異はここに追記) |
+| 背面ウィンドウ・別Spaceのウィンドウでもフレーム更新される | 部分VERIFIED / 部分反証 (2026-08-03) | 同一Space背面: 映像継続OK。別Space: フレーム供給は継続するがソースアプリの描画抑制で動画要素が黒くなる(§9に制約として記載、対応はスコープ外) |
+| HEVCハードウェアエンコードで2時間録画してもメモリが安定 | ほぼVERIFIED (2026-08-03) | 1時間47分54秒の実録がfinalizeまで完走、全時間軸シーク可。メモリ推移の定量計測はPhase 2の2時間試験で実施 |
+| macOS 26でのSCK API挙動が15と同等 | VERIFIED (Phase 1範囲) | 列挙・サムネイル・ウィンドウキャプチャ・アプリ音声分離・fragmented書き込みすべて期待どおり動作 |
 
 ## 12. 実装フェーズ
 

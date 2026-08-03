@@ -37,6 +37,16 @@ struct CropGeometryTests {
         #expect(rect == nil)
     }
 
+    @Test("A content crop that partly leaves the window is clipped to its intersection")
+    func clipsPartiallyOutOfBoundsContentCrop() {
+        let rect = CropGeometry.clampedContentRect(
+            CGRect(x: -10, y: 100, width: 30, height: 80),
+            contentSize: CGSize(width: 1_000, height: 500)
+        )
+
+        #expect(rect == CGRect(x: 0, y: 100, width: 20, height: 80))
+    }
+
     @Test("Crop output dimensions use the shared even-pixel rule after scaling")
     func roundsScaledCropDimensionsToEvenPixels() {
         let output = CaptureDimensions.outputSize(
@@ -47,5 +57,13 @@ struct CropGeometryTests {
 
         #expect(output.width == 322)
         #expect(output.height == 240)
+
+        let nonUniformOutput = CaptureDimensions.outputSize(
+            contentSize: CGSize(width: 321, height: 239),
+            pointPixelScale: CGSize(width: 1.5, height: 2),
+            scalePercent: 50
+        )
+        #expect(nonUniformOutput.width == 242)
+        #expect(nonUniformOutput.height == 240)
     }
 }

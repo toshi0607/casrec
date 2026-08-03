@@ -23,8 +23,15 @@ struct CropSelectionSheet: View {
     }
 
     private var selectedPixelSize: CGSize? {
-        guard let selectedContentRect else { return nil }
-        let scale = previewPixelSize.width / preview.contentSize.width
+        guard let selectedContentRect,
+              preview.contentSize.width > 0,
+              preview.contentSize.height > 0 else {
+            return nil
+        }
+        let scale = CGSize(
+            width: previewPixelSize.width / preview.contentSize.width,
+            height: previewPixelSize.height / preview.contentSize.height
+        )
         let outputSize = CaptureDimensions.outputSize(
             contentSize: selectedContentRect.size,
             pointPixelScale: scale,

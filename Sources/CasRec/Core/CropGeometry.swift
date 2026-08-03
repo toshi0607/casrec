@@ -85,10 +85,25 @@ enum CaptureDimensions {
         pointPixelScale: CGFloat,
         scalePercent: Int
     ) -> (width: Int, height: Int) {
+        outputSize(
+            contentSize: contentSize,
+            pointPixelScale: CGSize(width: pointPixelScale, height: pointPixelScale),
+            scalePercent: scalePercent
+        )
+    }
+
+    /// The stream's `pointPixelScale` is normally uniform. Screenshot previews retain
+    /// their actual width and height independently, however, so the UI can use this
+    /// overload to report a correct size even if a future capture path is non-uniform.
+    static func outputSize(
+        contentSize: CGSize,
+        pointPixelScale: CGSize,
+        scalePercent: Int
+    ) -> (width: Int, height: Int) {
         let percent = CGFloat(scalePercent) / 100.0
         return (
-            width: evenPixelCount(contentSize.width * pointPixelScale * percent),
-            height: evenPixelCount(contentSize.height * pointPixelScale * percent)
+            width: evenPixelCount(contentSize.width * pointPixelScale.width * percent),
+            height: evenPixelCount(contentSize.height * pointPixelScale.height * percent)
         )
     }
 

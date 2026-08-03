@@ -19,7 +19,7 @@
 |------|------|
 | Xcode | **無し**。SwiftPM + CLTで開発(DESIGN.md §8/§10をSwiftPM方式に更新済み) |
 | CLT | **26.6インストール済み**(SDK 26.5 / Swift 6.3.3)。旧13.3がブロッカーだった |
-| 署名 | 有効な証明書0件。ad-hocで開始し、TCC再許可の摩擦が確認されたら自己署名証明書を導入 |
+| 署名 | ~~ad-hoc~~ → **自己署名証明書「CasRec Dev」に切替済み(2026-08-03)**。ad-hocはリビルド毎にTCC許可が無効化される摩擦が実際に発生(§8の予見どおり)。tccutilで壊れたレコードを掃除し、証明書署名でdesignated requirementを安定化 |
 | ffmpeg | 未確認(Phase 3までに確認) |
 
 ## Assumptions

@@ -23,7 +23,7 @@ jobs:
           make test | tee test-output.log
       - name: Verify tests were executed
         run: |
-          if ! rg -q 'Test run with [1-9][0-9]* tests' test-output.log; then
+          if ! grep -Eq 'Test run with [1-9][0-9]* tests' test-output.log; then
             echo "Swift Testing did not report any executed tests."
             exit 1
           fi

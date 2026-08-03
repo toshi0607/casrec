@@ -37,6 +37,37 @@ enum CropGeometry {
         return clampedContentRect(converted, contentSize: contentSize)
     }
 
+    /// Converts a persisted content-space crop back into preview pixels so reopening the
+    /// selector shows the user's existing selection. A crop that no longer fits the current
+    /// content size is rejected instead of being silently moved or clipped.
+    static func previewRect(
+        from contentRect: CGRect,
+        previewPixelSize: CGSize,
+        contentSize: CGSize
+    ) -> CGRect? {
+        guard previewPixelSize.width > 0, previewPixelSize.height > 0,
+              contentSize.width > 0, contentSize.height > 0 else {
+            return nil
+        }
+
+        let standardized = contentRect.standardized
+        guard let validContentRect = clampedContentRect(standardized, contentSize: contentSize),
+              validContentRect == standardized else {
+            return nil
+        }
+
+        let pixelScale = CGSize(
+            width: previewPixelSize.width / contentSize.width,
+            height: previewPixelSize.height / contentSize.height
+        )
+        return CGRect(
+            x: standardized.minX * pixelScale.width,
+            y: standardized.minY * pixelScale.height,
+            width: standardized.width * pixelScale.width,
+            height: standardized.height * pixelScale.height
+        )
+    }
+
     /// Revalidates a persisted crop against the content size at capture start. This is
     /// needed when the user resized the target window after making the selection.
     static func clampedContentRect(_ rect: CGRect, contentSize: CGSize) -> CGRect? {

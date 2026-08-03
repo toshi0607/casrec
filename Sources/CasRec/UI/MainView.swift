@@ -107,7 +107,10 @@ struct MainView: View {
             await observeSources()
         }
         .sheet(item: $cropPreview) { preview in
-            CropSelectionSheet(preview: preview) { rect, pixelSize in
+            CropSelectionSheet(
+                preview: preview,
+                initialContentRect: cropPreviewSourceID == selectedSourceId ? settings.sourceCropRect : nil
+            ) { rect, pixelSize in
                 guard cropPreviewSourceID == selectedSourceId else { return }
                 settings.sourceCropRect = rect
                 cropPixelSize = pixelSize

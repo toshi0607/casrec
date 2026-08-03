@@ -9,6 +9,23 @@ struct CropSelectionSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selectionInPreviewPixels: CGRect?
 
+    init(
+        preview: CapturePreview,
+        initialContentRect: CGRect?,
+        onConfirm: @escaping (CGRect, CGSize) -> Void
+    ) {
+        self.preview = preview
+        self.onConfirm = onConfirm
+        let previewPixelSize = CGSize(width: preview.image.width, height: preview.image.height)
+        _selectionInPreviewPixels = State(initialValue: initialContentRect.flatMap {
+            CropGeometry.previewRect(
+                from: $0,
+                previewPixelSize: previewPixelSize,
+                contentSize: preview.contentSize
+            )
+        })
+    }
+
     private var previewPixelSize: CGSize {
         CGSize(width: preview.image.width, height: preview.image.height)
     }

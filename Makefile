@@ -3,6 +3,7 @@ BUILD_DIR := .build
 APP_BUNDLE := $(APP_NAME).app
 CONTENTS := $(APP_BUNDLE)/Contents
 MACOS_DIR := $(CONTENTS)/MacOS
+RESOURCES_DIR := $(CONTENTS)/Resources
 
 # Swift Testing ships inside the Command Line Tools, but only a full Xcode tells SwiftPM
 # where to find it, so plain `swift test` fails to compile (no module) and, if given only
@@ -30,9 +31,10 @@ test:
 
 bundle:
 	swift build -c release
-	mkdir -p "$(MACOS_DIR)"
+	mkdir -p "$(MACOS_DIR)" "$(RESOURCES_DIR)"
 	cp "$(BUILD_DIR)/release/$(APP_NAME)" "$(MACOS_DIR)/$(APP_NAME)"
 	cp Resources/Info.plist "$(CONTENTS)/Info.plist"
+	cp Resources/AppIcon.icns "$(RESOURCES_DIR)/AppIcon.icns"
 	codesign --force -s "$(CODESIGN_IDENTITY)" "$(APP_BUNDLE)"
 
 run: bundle

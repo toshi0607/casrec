@@ -6,6 +6,8 @@
     <string>CasRec</string>
     <key>CFBundleIdentifier</key>
     <string>dev.toshi0607.casrec</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleName</key>
     <string>CasRec</string>
     <key>CFBundlePackageType</key>

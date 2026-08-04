@@ -168,9 +168,9 @@ Phase 2への持ち越し(opus実測による発見): audio input が有効な�
 
 ### PR #13 レビュー+実機確認(メニューバー常駐+ホットキー、外部エージェント実装、2026-08-04)
 
-- [x] 静的レビュー: 仕様9項目対応・RegisterEventHotKey方式遵守(global monitor不使用)・開始前チェックの3経路共通化(RecordingControls/startRecordingIfReady)・トグル判定純粋関数+4テスト。**Low〜Medium指摘1件**: ホットキー起因のクイック開始失敗時、mainWindowRequestのonChangeがMenuBarExtraコンテンツ(メニュー表示中のみ評価)にあるためウィンドウ自動オープンが機能しない可能性 → PRコメントで修正案2種を提示、追いコミット待ち
+- [x] 静的レビュー: 仕様9項目対応・RegisterEventHotKey方式遵守(global monitor不使用)・開始前チェックの3経路共通化(RecordingControls/startRecordingIfReady)・トグル判定純粋関数+4テスト。**Low〜Medium指摘1件**: ホットキー起因のクイック開始失敗時、mainWindowRequestのonChangeがMenuBarExtraコンテンツ(メニュー表示中のみ評価)にあるためウィンドウ自動オープンが機能しない可能性 → **2往復で解決**: ff17899(MainViewのonChange方式)は閉じたWindowシーンでonChange不発のため実機再現2回で反証、NSApp.windowsからidentifier "main"をmakeKeyAndOrderFrontする案を再提示 → 582904f/f934186で採用され、**ウィンドウ閉+失敗→自動オープン+バナー表示を実機VERIFIED**(2026-08-04)。mainWindowRequest機構は削除され簡素化。通常経路の回帰なし
 - [x] 挙動変更の記録: last-window-close時の自動終了を廃止(常駐化の帰結、終了導線はメニュー+⌘Q)
 - [x] 再検証: 警告ゼロ / `make test` 56件(52+新規4)全パス / bundle成功 / CI緑
 - [x] 実機確認: ⌥⌘R開始/停止トグル(ウィンドウ開・閉両状態)/ ⌘W後のプロセス生存(常駐)/ 閉状態でのクイック開始(再解決経由、Safari-20260804-001602.mov)— いずれもVERIFIED。権限ダイアログ非発生(RegisterEventHotKeyの狙いどおり)
-- 未消化: メニューバーアイテムの表示・メニュー操作はIce(メニューバー管理ツール)が隠し領域に配置しており自動化から展開不能 → **ユーザー目視待ち**(Iceの表示側へ移動して確認)。失敗経路の実機再現も未実施(上記指摘の検証を兼ねて追いコミット後に確認)
+- 未消化→解消: メニューバーアイテムは**ユーザー目視で表示確認済み**(Ice+ノッチ環境で常時視認は制限=環境要因)。メニュー項目のクリック操作のみ自動化不能で未実施(ホットキーが同一のtoggleQuickRecording経路を通り実質カバー)。§11のRegisterEventHotKey行はVERIFIED化可(次回docs更新で反映)。別Spaceのウィンドウはクイック開始の再解決に失敗する(SCK列挙のonScreen特性、§9既知制約の同族)
 - 検証録画2本追加(削除可): Safari-20260804-001433.mov(ホットキー開始)/ Safari-20260804-001602.mov(閉状態開始)

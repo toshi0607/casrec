@@ -181,7 +181,7 @@ final class RecordingControls {
                 await session.stop()
             },
             didStart: { [weak self] _, maximumDuration in
-                await self?.setActiveRecordingMaximumDuration(maximumDuration)
+                await self?.recordingDidStart(maximumDuration: maximumDuration)
             }
         )
     }
@@ -234,7 +234,7 @@ final class RecordingControls {
 
     private func configureMaximumDurationStop(recordingStartedAt: Date) async {
         let maximumDuration = recordingDurationLimit.duration
-        activeRecordingMaximumDuration = maximumDuration
+        recordingDidStart(maximumDuration: maximumDuration)
         await scheduler.scheduleAutoStop(
             maximumDuration: maximumDuration,
             recordingStartedAt: recordingStartedAt,
@@ -243,7 +243,8 @@ final class RecordingControls {
         )
     }
 
-    private func setActiveRecordingMaximumDuration(_ maximumDuration: TimeInterval?) {
+    private func recordingDidStart(maximumDuration: TimeInterval?) {
+        durationLimitBannerMessage = nil
         activeRecordingMaximumDuration = maximumDuration
     }
 }

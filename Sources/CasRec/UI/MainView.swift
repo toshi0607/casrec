@@ -9,9 +9,8 @@ struct MainView: View {
 
     let session: any RecordingSessionControlling
     let captureService: any CaptureServicing
-    let scheduler: RecordingScheduler
+    @Bindable var controls: RecordingControls
 
-    @State private var currentState: RecordingState = .idle
     @State private var sources: [CaptureSource] = []
     /// Non-nil while the source list cannot be read — most importantly when screen
     /// recording has not been granted, which is otherwise indistinguishable from
@@ -19,8 +18,6 @@ struct MainView: View {
     @State private var sourcesUnavailable: CaptureUnavailableReason?
     @State private var selectedSourceId: String?
 
-    @State private var settings = RecordingSettings.default
-    @State private var outputDirectoryWarning: String?
     @State private var libraryRefreshToken = 0
     @State private var wasRecording = false
     @State private var captureMode: CaptureSourceKind = .window
@@ -30,23 +27,21 @@ struct MainView: View {
     @State private var isLoadingCropPreview = false
     @State private var scheduledStartAt = Date().addingTimeInterval(10 * 60)
     @State private var scheduledMaximumDuration: RecordingDurationLimit = .none
-    @State private var scheduledRecording: ScheduledRecording?
-    @State private var scheduleBannerMessage: String?
-
     @State private var errorMessage: String?
     @State private var showingError = false
-
-    private let outputDirectoryPreferences = OutputDirectoryPreferences()
 
     init(
         session: any RecordingSessionControlling,
         captureService: any CaptureServicing,
-        scheduler: RecordingScheduler
+        controls: RecordingControls
     ) {
         self.session = session
         self.captureService = captureService
-        self.scheduler = scheduler
+        self.controls = controls
+        _selectedSourceId = State(initialValue: controls.selectedSourceID)
     }
+
+    private var currentState: RecordingState { controls.currentState }
 
     var isRecording: Bool {
         if case .recording = currentState {
@@ -95,7 +90,7 @@ struct MainView: View {
                 }
 
             LibraryView(
-                directory: settings.destinationDirectory,
+                directory: controls.settings.destinationDirectory,
                 refreshToken: libraryRefreshToken,
                 allowsDeletion: !isRecording && !isTransitioning
             )
@@ -104,27 +99,20 @@ struct MainView: View {
             }
         }
         .frame(minWidth: 500, minHeight: 400)
-        .task {
-            refreshOutputDirectory()
-            await observeState()
-        }
         .task(id: isPollingSources) {
             guard isPollingSources else { return }
             await observeSources()
         }
-        .task {
-            await observeScheduledRecording()
-        }
-        .task {
-            await observeScheduleEvents()
+        .onChange(of: currentState) { _, state in
+            updateRecordingCompletion(state)
         }
         .sheet(item: $cropPreview) { preview in
             CropSelectionSheet(
                 preview: preview,
-                initialContentRect: cropPreviewSourceID == selectedSourceId ? settings.sourceCropRect : nil
+                initialContentRect: cropPreviewSourceID == selectedSourceId ? controls.settings.sourceCropRect : nil
             ) { rect, pixelSize in
                 guard cropPreviewSourceID == selectedSourceId else { return }
-                settings.sourceCropRect = rect
+                controls.settings.sourceCropRect = rect
                 cropPixelSize = pixelSize
             }
         }
@@ -134,6 +122,9 @@ struct MainView: View {
         VStack(spacing: 16) {
             ScrollView {
                 VStack(spacing: 16) {
+                    if let quickStartBannerMessage = controls.quickStartBannerMessage {
+                        quickStartBanner(quickStartBannerMessage)
+                    }
                     sourceSelectionSection
                     cropSelectionSection
                     audioSettingsSection
@@ -162,6 +153,21 @@ struct MainView: View {
         } message: {
             Text(errorMessage ?? "An unknown error occurred")
         }
+    }
+
+    private func quickStartBanner(_ message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.orange)
+            Text(message)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(8)
+        .background(Color.orange.opacity(0.1))
+        .cornerRadius(6)
     }
 
     private var sourceSelectionSection: some View {
@@ -197,6 +203,7 @@ struct MainView: View {
             )
             .onChange(of: selectedSourceId) {
                 clearCrop()
+                controls.selectSource(selectedSource)
             }
         }
     }
@@ -276,12 +283,12 @@ struct MainView: View {
                 .foregroundColor(.secondary)
 
             HStack(spacing: 20) {
-                Toggle(isOn: $settings.captureAppAudio) {
+                Toggle(isOn: $controls.settings.captureAppAudio) {
                     Text("App Audio")
                         .font(.caption)
                 }
 
-                Toggle(isOn: $settings.captureMicrophone) {
+                Toggle(isOn: $controls.settings.captureMicrophone) {
                     Text("Microphone")
                         .font(.caption)
                 }
@@ -302,7 +309,7 @@ struct MainView: View {
                     Text("Codec")
                         .font(.caption2)
                         .foregroundColor(.secondary)
-                    Picker("Codec", selection: $settings.codec) {
+                    Picker("Codec", selection: $controls.settings.codec) {
                         Text("HEVC").tag(VideoCodec.hevc)
                         Text("H.264").tag(VideoCodec.h264)
                     }
@@ -315,7 +322,7 @@ struct MainView: View {
                     Text("Resolution")
                         .font(.caption2)
                         .foregroundColor(.secondary)
-                    Picker("Resolution", selection: $settings.scalePercent) {
+                    Picker("Resolution", selection: $controls.settings.scalePercent) {
                         Text("100%").tag(100)
                         Text("50%").tag(50)
                     }
@@ -328,7 +335,7 @@ struct MainView: View {
                     Text("FPS")
                         .font(.caption2)
                         .foregroundColor(.secondary)
-                    Picker("FPS", selection: $settings.fps) {
+                    Picker("FPS", selection: $controls.settings.fps) {
                         Text("30").tag(30)
                         Text("60").tag(60)
                     }
@@ -348,7 +355,7 @@ struct MainView: View {
                 Text("Save to")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                Text(settings.destinationDirectory.path)
+                Text(controls.settings.destinationDirectory.path)
                     .font(.caption)
                     .lineLimit(1)
                 Spacer()
@@ -358,7 +365,7 @@ struct MainView: View {
                 .disabled(isRecording || isTransitioning)
             }
 
-            if let outputDirectoryWarning {
+            if let outputDirectoryWarning = controls.outputDirectoryWarning {
                 HStack(spacing: 8) {
                     Image(systemName: "externaldrive.fill.badge.exclamationmark")
                         .foregroundColor(.yellow)
@@ -380,7 +387,7 @@ struct MainView: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
 
-            if let scheduledRecording {
+            if let scheduledRecording = controls.scheduledRecording {
                 TimelineView(.periodic(from: .now, by: 60)) { _ in
                     let remainingMinutes = max(0, Int(ceil(scheduledRecording.startAt.timeIntervalSinceNow / 60)))
                     HStack {
@@ -389,7 +396,7 @@ struct MainView: View {
                         Spacer()
                         Button("キャンセル") {
                             Task {
-                                await scheduler.cancel()
+                                await controls.cancelScheduledRecording()
                             }
                         }
                     }
@@ -408,14 +415,18 @@ struct MainView: View {
 
                     Button("予約する") {
                         Task {
-                            await scheduleRecording()
+                            await controls.scheduleRecording(
+                                startAt: scheduledStartAt,
+                                source: selectedSource,
+                                maximumDuration: scheduledMaximumDuration.duration
+                            )
                         }
                     }
                     .disabled(selectedSource == nil)
                 }
             }
 
-            if let scheduleBannerMessage {
+            if let scheduleBannerMessage = controls.scheduleBannerMessage {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(.orange)
@@ -503,7 +514,7 @@ struct MainView: View {
             } else {
                 Button(action: {
                     Task {
-                        await startRecording()
+                        await controls.startManually(source: selectedSource)
                     }
                 }) {
                     HStack {
@@ -521,20 +532,16 @@ struct MainView: View {
         }
     }
 
-    private func observeState() async {
-        let stream = session.observeState()
-        for await state in stream {
-            currentState = state
-            if case .recording = state {
-                wasRecording = true
-            } else if case .idle = state, wasRecording {
-                wasRecording = false
-                libraryRefreshToken += 1
-            }
-            if case .failed(let message) = state {
-                errorMessage = message
-                showingError = true
-            }
+    private func updateRecordingCompletion(_ state: RecordingState) {
+        if case .recording = state {
+            wasRecording = true
+        } else if case .idle = state, wasRecording {
+            wasRecording = false
+            libraryRefreshToken += 1
+        }
+        if case .failed(let message) = state {
+            errorMessage = message
+            showingError = true
         }
     }
 
@@ -550,25 +557,7 @@ struct MainView: View {
                 sourcesUnavailable = reason
             }
             syncSelection()
-        }
-    }
-
-    private func observeScheduledRecording() async {
-        let stream = await scheduler.observeReservation()
-        for await reservation in stream {
-            scheduledRecording = reservation
-        }
-    }
-
-    private func observeScheduleEvents() async {
-        let stream = await scheduler.observeEvents()
-        for await event in stream {
-            switch event {
-            case .skippedBecauseSessionWasNotIdle:
-                scheduleBannerMessage = "予約時刻になりましたが、録画状態が待機中ではないため開始しませんでした。"
-            case .couldNotStart(let message):
-                scheduleBannerMessage = message
-            }
+            controls.selectSource(selectedSource)
         }
     }
 
@@ -588,7 +577,7 @@ struct MainView: View {
     }
 
     private func clearCrop() {
-        settings.sourceCropRect = nil
+        controls.settings.sourceCropRect = nil
         cropPixelSize = nil
     }
 
@@ -601,62 +590,6 @@ struct MainView: View {
         selectedSourceId = visible.first?.id
     }
 
-    /// Re-check immediately before starting: a removable destination may have disappeared
-    /// after the app launched or while the user was choosing a source (§7).
-    private func startRecording() async {
-        refreshOutputDirectory()
-        guard outputDirectoryPreferences.isUsable(settings.destinationDirectory) else {
-            errorMessage = "保存先を利用できません。保存先を変更してから録画を開始してください。"
-            showingError = true
-            return
-        }
-        guard let source = selectedSource else { return }
-        await session.start(source: source, settings: settings)
-    }
-
-    private func scheduleRecording() async {
-        refreshOutputDirectory()
-        guard scheduledStartAt > Date() else {
-            scheduleBannerMessage = "開始時刻には現在より後の時刻を指定してください。"
-            return
-        }
-        guard outputDirectoryPreferences.isUsable(settings.destinationDirectory) else {
-            scheduleBannerMessage = "保存先を利用できません。保存先を変更してから予約してください。"
-            return
-        }
-        guard let source = selectedSource else { return }
-
-        scheduleBannerMessage = nil
-        let reservation = ScheduledRecording(
-            startAt: scheduledStartAt,
-            source: source,
-            settings: settings,
-            maximumDuration: scheduledMaximumDuration.duration
-        )
-        await scheduler.schedule(
-            reservation,
-            stateProvider: { await recordingState(of: session) },
-            start: { reservation in
-                await startScheduledRecording(
-                    reservation,
-                    captureService: captureService,
-                    session: session
-                )
-            },
-            stop: {
-                await session.stop()
-            }
-        )
-    }
-
-    private func refreshOutputDirectory() {
-        let resolution = outputDirectoryPreferences.load()
-        settings.destinationDirectory = resolution.directory
-        outputDirectoryWarning = resolution.didFallback
-            ? "設定されていた保存先を利用できないため、既定の保存先に戻しました。"
-            : nil
-    }
-
     private func chooseOutputDirectory() {
         let panel = NSOpenPanel()
         panel.title = "保存先を選択"
@@ -664,14 +597,9 @@ struct MainView: View {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
-        panel.directoryURL = settings.destinationDirectory
+        panel.directoryURL = controls.settings.destinationDirectory
         guard panel.runModal() == .OK, let directory = panel.url else { return }
-        guard outputDirectoryPreferences.save(directory: directory) else {
-            outputDirectoryWarning = "選択した保存先に書き込めません。別のフォルダを選択してください。"
-            return
-        }
-        settings.destinationDirectory = directory
-        outputDirectoryWarning = nil
+        guard controls.saveOutputDirectory(directory) else { return }
         libraryRefreshToken += 1
     }
 }
@@ -703,49 +631,5 @@ private enum RecordingDurationLimit: CaseIterable, Identifiable {
         case .twoHours: "録画時間の上限: 2時間"
         case .threeHours: "録画時間の上限: 3時間"
         }
-    }
-}
-
-private func recordingState(of session: any RecordingSessionControlling) async -> RecordingState {
-    for await state in session.observeState() {
-        return state
-    }
-    return .idle
-}
-
-/// `observeSources()` starts a new ScreenCaptureKit enumeration for every subscriber, so
-/// this deliberately uses a fresh stream at firing time rather than the UI's last poll.
-private func startScheduledRecording(
-    _ reservation: ScheduledRecording,
-    captureService: any CaptureServicing,
-    session: any RecordingSessionControlling
-) async -> ScheduledRecordingStartResult {
-    for await update in captureService.observeSources() {
-        switch update {
-        case .sources(let sources):
-            guard let source = CaptureSourceResolver.resolve(saved: reservation.source, in: sources) else {
-                return .couldNotStart(message: "予約時の録画対象が見つからないため、録画を開始しませんでした。")
-            }
-            guard await recordingState(of: session) == .idle else {
-                return .couldNotStart(message: "予約時刻になりましたが、録画状態が待機中ではないため開始しませんでした。")
-            }
-            await session.start(source: source, settings: reservation.settings)
-            guard case .recording(let progress) = await recordingState(of: session) else {
-                return .couldNotStart(message: "予約録画を開始できませんでした。")
-            }
-            return .started(recordingStartedAt: progress.startedAt)
-        case .unavailable(let reason):
-            return .couldNotStart(message: "録画対象を再取得できないため、録画を開始しませんでした: \(scheduleSourceErrorMessage(reason))")
-        }
-    }
-    return .couldNotStart(message: "録画対象を再取得できないため、録画を開始しませんでした。")
-}
-
-private func scheduleSourceErrorMessage(_ reason: CaptureUnavailableReason) -> String {
-    switch reason {
-    case .permissionDenied:
-        "画面収録が許可されていません"
-    case .failed(let message):
-        message
     }
 }

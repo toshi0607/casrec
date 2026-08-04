@@ -1,4 +1,5 @@
 import AppKit
+import Observation
 import SwiftUI
 
 @main
@@ -13,8 +14,14 @@ struct CasRecApp: App {
             MainView(
                 session: appDelegate.session,
                 captureService: appDelegate.captureService,
-                scheduler: appDelegate.scheduler
+                controls: appDelegate.controls
             )
+        }
+
+        MenuBarExtra {
+            MenuBarControls(controls: appDelegate.controls)
+        } label: {
+            MenuBarIcon(state: appDelegate.controls.currentState)
         }
     }
 }
@@ -27,38 +34,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let captureService: CaptureService
     let session: RecordingSession
     let scheduler: RecordingScheduler
+    let controls: RecordingControls
 
     /// Mirror of the session's published state, so the synchronous
     /// `applicationShouldTerminate` can decide without awaiting.
     private var currentState: RecordingState = .idle
     private var stateObserver: Task<Void, Never>?
+    private var globalHotKey: GlobalHotKey?
 
-    nonisolated override init() {
+    override init() {
         let captureService = CaptureService()
         self.captureService = captureService
         self.session = RecordingSession(captureService: captureService)
         self.scheduler = RecordingScheduler()
+        self.controls = RecordingControls(
+            session: session,
+            captureService: captureService,
+            scheduler: scheduler
+        )
         super.init()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        controls.startObserving()
         stateObserver = Task {
             for await state in session.observeState() {
                 currentState = state
             }
         }
+        globalHotKey = GlobalHotKey { [weak self] in
+            Task { @MainActor [weak self] in
+                await self?.controls.toggleQuickRecording()
+            }
+        }
+        globalHotKey?.register()
     }
 
-    /// A recording outlives its window (§5.4) — but only a recording. With nothing in
-    /// flight, closing the window is the user asking the app to go away, and staying alive
-    /// as an invisible process would just be a leak they cannot see.
+    /// The menu-bar item remains the visible control surface after the main window closes,
+    /// so closing the window must never terminate the process.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        switch currentState {
-        case .preparing, .recording, .finishing:
-            return false
-        case .idle, .failed:
-            return true
-        }
+        false
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

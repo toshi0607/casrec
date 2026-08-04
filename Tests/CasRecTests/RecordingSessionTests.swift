@@ -32,6 +32,29 @@ struct RecordingSessionTests {
         #expect(directory.contents().isEmpty, "nothing was recorded, so no artifacts may linger")
     }
 
+    @Test("A manual stop racing disk critical tears down exactly once")
+    func manualStopRacingDiskCritical() async {
+        let directory = TempDirectory()
+        defer { directory.remove() }
+        let capture = FakeCaptureService()
+        let guards = FakeSessionGuards()
+        let session = RecordingSession(captureService: capture, guards: guards)
+
+        await session.start(source: makeTestSource(), settings: directory.settings())
+
+        // The disk guard and the stop button are independent §4 exit paths. The capture
+        // stop count is the observable teardown count; the coordinator's own once-only
+        // finish contract is exercised by its dedicated concurrent-finish test.
+        async let stopped: Void = session.stop()
+        guards.send(.critical(availableBytes: 0))
+        await stopped
+
+        let final = await awaitState(session) { $0.isTerminal }
+        #expect(final != nil)
+        #expect(capture.stopCallCount == 1, "only one path may reach finishWriting")
+        #expect(guards.stopCallCount == 1, "the guard teardown must run exactly once")
+    }
+
     @Test("A stream failure racing a second stream failure tears down exactly once")
     func repeatedCaptureEndedEventsAreIdempotent() async {
         let directory = TempDirectory()

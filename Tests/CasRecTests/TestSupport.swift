@@ -46,6 +46,54 @@ enum FakeCaptureError: Error {
     case startRefused
 }
 
+/// Test-controlled disk guard. It mirrors only the session-facing surface of
+/// `SessionGuards`, leaving the production thresholds and polling behavior untouched.
+final class FakeSessionGuards: SessionGuarding, @unchecked Sendable {
+    private struct State {
+        var startCalls = 0
+        var stopCalls = 0
+        var observers: [UUID: AsyncStream<DiskSpaceStatus>.Continuation] = [:]
+    }
+
+    private let state = Mutex(State())
+
+    var startCallCount: Int { state.withLock { $0.startCalls } }
+    var stopCallCount: Int { state.withLock { $0.stopCalls } }
+
+    func observeDiskSpace() -> AsyncStream<DiskSpaceStatus> {
+        let id = UUID()
+        let (stream, continuation) = AsyncStream<DiskSpaceStatus>.makeStream()
+        continuation.onTermination = { [weak self] _ in
+            self?.state.withLock { _ = $0.observers.removeValue(forKey: id) }
+        }
+        state.withLock { $0.observers[id] = continuation }
+        return stream
+    }
+
+    func start(monitoring destinationDirectory: URL) {
+        state.withLock { $0.startCalls += 1 }
+    }
+
+    func stop() {
+        let observers = state.withLock { current -> [AsyncStream<DiskSpaceStatus>.Continuation] in
+            current.stopCalls += 1
+            let observers = Array(current.observers.values)
+            current.observers.removeAll()
+            return observers
+        }
+        for observer in observers {
+            observer.finish()
+        }
+    }
+
+    func send(_ status: DiskSpaceStatus) {
+        let observers = state.withLock { Array($0.observers.values) }
+        for observer in observers {
+            observer.yield(status)
+        }
+    }
+}
+
 /// Stands in for `CaptureService` so the session's state machine can be driven without
 /// ScreenCaptureKit or the screen-recording permission. The test decides whether
 /// `startCapture` succeeds and pushes capture-ended events by hand.

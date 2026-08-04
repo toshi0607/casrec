@@ -19,6 +19,15 @@ enum DiskSpaceStatus: Sendable, Equatable {
     }
 }
 
+/// The session-facing portion of the unattended-recording safeguards. Keeping this
+/// boundary local to the recording layer lets tests drive a disk-critical event without
+/// changing `SessionGuards`' thresholds, polling cadence, or production behavior.
+protocol SessionGuarding: Sendable {
+    func observeDiskSpace() -> AsyncStream<DiskSpaceStatus>
+    func start(monitoring destinationDirectory: URL)
+    func stop()
+}
+
 /// The two ambient hazards of a multi-hour unattended recording (DESIGN.md §5.4, R9):
 /// the Mac going to sleep, and the disk filling up.
 ///
@@ -29,7 +38,7 @@ enum DiskSpaceStatus: Sendable, Equatable {
 /// `@unchecked Sendable` is sound because every stored property lives inside `state`, a
 /// `Mutex`; the activity token is opaque and only ever handed back to `ProcessInfo` from
 /// inside that lock.
-final class SessionGuards: @unchecked Sendable {
+final class SessionGuards: SessionGuarding, @unchecked Sendable {
     /// Warn below 5 GB (§5.4).
     static let warningThreshold: Int64 = 5 * 1024 * 1024 * 1024
     /// Force a clean stop below 2 GB (§5.4).

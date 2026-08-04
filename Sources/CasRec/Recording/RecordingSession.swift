@@ -78,10 +78,10 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
     }
 
     private let captureService: any CaptureServicing
-    private let guards: SessionGuards
+    private let guards: any SessionGuarding
     private let state = Mutex(State())
 
-    init(captureService: any CaptureServicing, guards: SessionGuards = SessionGuards()) {
+    init(captureService: any CaptureServicing, guards: any SessionGuarding = SessionGuards()) {
         self.captureService = captureService
         self.guards = guards
     }

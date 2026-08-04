@@ -27,8 +27,8 @@ struct MainView: View {
     @State private var isLoadingCropPreview = false
     @State private var scheduledStartAt = Date().addingTimeInterval(10 * 60)
     @State private var scheduledMaximumDuration: RecordingDurationLimit = .none
-    @State private var errorMessage: String?
-    @State private var showingError = false
+    @State private var cropErrorMessage: String?
+    @State private var showingCropError = false
 
     init(
         session: any RecordingSessionControlling,
@@ -146,12 +146,12 @@ struct MainView: View {
             }
         }
         .padding(16)
-        .alert("Recording Error", isPresented: $showingError) {
+        .alert("領域選択エラー", isPresented: $showingCropError) {
             Button("OK") {
-                showingError = false
+                showingCropError = false
             }
         } message: {
-            Text(errorMessage ?? "An unknown error occurred")
+            Text(cropErrorMessage ?? "領域選択用の画面を取得できませんでした")
         }
     }
 
@@ -494,7 +494,6 @@ struct MainView: View {
                 .cornerRadius(8)
 
                 Button(action: {
-                    errorMessage = nil
                     // Without this the session stays `failed` forever and every later
                     // start is ignored (§4: failed -> idle).
                     Task {
@@ -539,10 +538,6 @@ struct MainView: View {
             wasRecording = false
             libraryRefreshToken += 1
         }
-        if case .failed(let message) = state {
-            errorMessage = message
-            showingError = true
-        }
     }
 
     private func observeSources() async {
@@ -571,8 +566,8 @@ struct MainView: View {
             cropPreviewSourceID = source.id
             cropPreview = preview
         } catch {
-            errorMessage = "領域選択用の画面を取得できませんでした: \(error.localizedDescription)"
-            showingError = true
+            cropErrorMessage = "領域選択用の画面を取得できませんでした: \(error.localizedDescription)"
+            showingCropError = true
         }
     }
 

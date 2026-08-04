@@ -36,10 +36,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let scheduler: RecordingScheduler
     let controls: RecordingControls
 
-    /// Mirror of the session's published state, so the synchronous
-    /// `applicationShouldTerminate` can decide without awaiting.
-    private var currentState: RecordingState = .idle
-    private var stateObserver: Task<Void, Never>?
     private var globalHotKey: GlobalHotKey?
 
     override init() {
@@ -57,11 +53,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         controls.startObserving()
-        stateObserver = Task {
-            for await state in session.observeState() {
-                currentState = state
-            }
-        }
         globalHotKey = GlobalHotKey { [weak self] in
             Task { @MainActor [weak self] in
                 await self?.controls.toggleQuickRecording()
@@ -77,7 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        switch currentState {
+        switch controls.currentState {
         case .idle, .failed:
             return .terminateNow
         case .preparing, .recording, .finishing:

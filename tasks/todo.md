@@ -174,3 +174,12 @@ Phase 2への持ち越し(opus実測による発見): audio input が有効な�
 - [x] 実機確認: ⌥⌘R開始/停止トグル(ウィンドウ開・閉両状態)/ ⌘W後のプロセス生存(常駐)/ 閉状態でのクイック開始(再解決経由、Safari-20260804-001602.mov)— いずれもVERIFIED。権限ダイアログ非発生(RegisterEventHotKeyの狙いどおり)
 - 未消化→解消: メニューバーアイテムは**ユーザー目視で表示確認済み**(Ice+ノッチ環境で常時視認は制限=環境要因)。メニュー項目のクリック操作のみ自動化不能で未実施(ホットキーが同一のtoggleQuickRecording経路を通り実質カバー)。§11のRegisterEventHotKey行はVERIFIED化可(次回docs更新で反映)。別Spaceのウィンドウはクイック開始の再解決に失敗する(SCK列挙のonScreen特性、§9既知制約の同族)
 - 検証録画2本追加(削除可): Safari-20260804-001433.mov(ホットキー開始)/ Safari-20260804-001602.mov(閉状態開始)
+
+### PR #15 レビュー+実機確認(Phase 2信頼性・整理バッチ、外部エージェント実装、2026-08-04)
+
+- [x] 静的レビュー: 6項目対応・**Recording層の変更線引き完全遵守**(RecordingSession+SessionGuardsプロトコルのみ、Contracts/Coordinator/CaptureService無変更、既存テスト無修正)。preparingタイムアウトはPreparationRace+世代トークンの多層防御+遅延成功時のストリーム解放まで実装
+- [x] disk critical競合テスト追加で停止3経路の競合カバレッジ完備(FakeSessionGuardsは本物の閾値に触れない純粋ダブル)
+- [x] failed表示一本化(アラート廃止→バナー+メニューバーexclamationmarkアイコン)、AppDelegate状態ミラー統一、Mocks.swift削除、§11更新(ホットキーVERIFIED/L8見送り/アラート行解消)
+- [x] 再検証: 警告ゼロ / `make test` 59件(56+新規3)×5回連続全パス / bundle成功 / CI緑
+- [x] 実機確認: 回帰(⌥⌘Rトグル録画→停止→finalize正常)+**偶然のレース実証**(列挙遅延中の二重⌥⌘Rでも録画1本のみ=start原子ガードの実機確認)
+- 実機未消化(担保根拠明記): preparingタイムアウト発火(人為再現不能→注入クロックテスト2件で担保)/ failedバナー・メニューバーfailedアイコン(failed状態の人為再現不能→既存表示の実績+宣言的コードで担保)

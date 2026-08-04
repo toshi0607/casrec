@@ -32,6 +32,29 @@ struct RecordingSessionTests {
         #expect(directory.contents().isEmpty, "nothing was recorded, so no artifacts may linger")
     }
 
+    @Test("A manual stop racing disk critical tears down exactly once")
+    func manualStopRacingDiskCritical() async {
+        let directory = TempDirectory()
+        defer { directory.remove() }
+        let capture = FakeCaptureService()
+        let guards = FakeSessionGuards()
+        let session = RecordingSession(captureService: capture, guards: guards)
+
+        await session.start(source: makeTestSource(), settings: directory.settings())
+
+        // The disk guard and the stop button are independent §4 exit paths. The capture
+        // stop count is the observable teardown count; the coordinator's own once-only
+        // finish contract is exercised by its dedicated concurrent-finish test.
+        async let stopped: Void = session.stop()
+        guards.send(.critical(availableBytes: 0))
+        await stopped
+
+        let final = await awaitState(session) { $0.isTerminal }
+        #expect(final != nil)
+        #expect(capture.stopCallCount == 1, "only one path may reach finishWriting")
+        #expect(guards.stopCallCount == 1, "the guard teardown must run exactly once")
+    }
+
     @Test("A stream failure racing a second stream failure tears down exactly once")
     func repeatedCaptureEndedEventsAreIdempotent() async {
         let directory = TempDirectory()
@@ -81,6 +104,55 @@ struct RecordingSessionTests {
         }
         #expect(message.contains("SCStreamErrorDomain#-3811"), "the cause must survive into the UI")
         #expect(!message.contains("保存されています"), "an empty recording must not be presented as saved")
+    }
+
+    @Test("A preparing timeout fails and ignores a late successful start")
+    func preparingTimeoutIgnoresLateSuccess() async {
+        let directory = TempDirectory()
+        defer { directory.remove() }
+        let capture = FakeCaptureService(blocksStart: true)
+        let guards = FakeSessionGuards()
+        let session = RecordingSession(
+            captureService: capture,
+            guards: guards,
+            preparingTimeout: .milliseconds(10)
+        )
+
+        await session.start(source: makeTestSource(), settings: directory.settings())
+
+        guard case .failed(let message) = await currentState(session) else {
+            Issue.record("a blocked start should time out into failed")
+            return
+        }
+        #expect(message.contains("応答がありません"))
+        #expect(guards.stopCallCount == 1)
+        #expect(directory.contents().isEmpty)
+
+        capture.releaseBlockedStart()
+        await waitForFakeCompletion { capture.completedStartCallCount == 1 }
+
+        #expect(await currentState(session) == .failed(message: message), "the late start must not re-enter recording")
+        #expect(capture.stopCallCount == 1, "a late successful start must be released")
+    }
+
+    @Test("A preparing timeout ignores a late start failure")
+    func preparingTimeoutIgnoresLateFailure() async {
+        let directory = TempDirectory()
+        defer { directory.remove() }
+        let capture = FakeCaptureService(startError: FakeCaptureError.startRefused, blocksStart: true)
+        let session = RecordingSession(captureService: capture, preparingTimeout: .milliseconds(10))
+
+        await session.start(source: makeTestSource(), settings: directory.settings())
+        guard case .failed(let message) = await currentState(session) else {
+            Issue.record("a blocked start should time out into failed")
+            return
+        }
+
+        capture.releaseBlockedStart()
+        await waitForFakeCompletion { capture.completedStartCallCount == 1 }
+
+        #expect(await currentState(session) == .failed(message: message), "the late failure must not replace the timeout")
+        #expect(capture.stopCallCount == 0)
     }
 
     // MARK: - failed -> idle

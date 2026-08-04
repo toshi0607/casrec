@@ -67,8 +67,11 @@ struct MenuBarIcon: View {
 
     var body: some View {
         switch state {
-        case .idle, .failed:
+        case .idle:
             Image(systemName: "record.circle")
+        case .failed:
+            Image(systemName: "exclamationmark.circle.fill")
+                .foregroundStyle(.red)
         case .recording:
             Image(systemName: "record.circle.fill")
                 .foregroundStyle(.red)

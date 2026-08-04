@@ -37,6 +37,10 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
     /// wedged `SCStream` cannot hold `finishWriting` hostage (§4).
     static let stopCaptureTimeout: Duration = .seconds(5)
 
+    /// `SCStream.startCapture()` should normally return immediately. Bound the preparing
+    /// phase so a ScreenCaptureKit call that never responds cannot leave the UI stuck.
+    static let preparingTimeout: Duration = .seconds(15)
+
     private static let log = Logger(subsystem: "dev.toshi0607.casrec", category: "session")
 
     /// The state machine's position, without the per-tick payload of `RecordingState`.
@@ -63,8 +67,30 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
         case writeFailed(String)
     }
 
+    private enum PreparationOutcome: Sendable {
+        case started
+        case failed(String)
+        case timedOut
+    }
+
+    /// A once-only winner for the two independently scheduled preparation outcomes.
+    private final class PreparationRace: @unchecked Sendable {
+        private let outcome = Mutex<PreparationOutcome?>(nil)
+
+        func tryWin(_ candidate: PreparationOutcome) -> Bool {
+            outcome.withLock { result in
+                guard result == nil else { return false }
+                result = candidate
+                return true
+            }
+        }
+    }
+
     private struct State {
         var phase: Phase = .idle
+        /// Distinguishes one asynchronous start attempt from every later attempt. A late
+        /// completion from a timed-out attempt is never allowed to alter a newer session.
+        var preparationGeneration = 0
         var lastState: RecordingState = .idle
         var startedAt: Date?
         /// Latched by the disk observer below 5 GB, cleared when space recovers (§5.4).
@@ -79,11 +105,17 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
 
     private let captureService: any CaptureServicing
     private let guards: any SessionGuarding
+    private let preparingTimeout: Duration
     private let state = Mutex(State())
 
-    init(captureService: any CaptureServicing, guards: any SessionGuarding = SessionGuards()) {
+    init(
+        captureService: any CaptureServicing,
+        guards: any SessionGuarding = SessionGuards(),
+        preparingTimeout: Duration = RecordingSession.preparingTimeout
+    ) {
         self.captureService = captureService
         self.guards = guards
+        self.preparingTimeout = preparingTimeout
     }
 
     // MARK: - RecordingSessionControlling
@@ -115,9 +147,10 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
     }
 
     func start(source: CaptureSource, settings: RecordingSettings) async {
-        let claimed = state.withLock { current -> Bool in
-            guard case .idle = current.phase else { return false }
+        let generation = state.withLock { current -> Int? in
+            guard case .idle = current.phase else { return nil }
             current.phase = .preparing
+            current.preparationGeneration &+= 1
             current.diskWarning = false
             // Any observer left over from a previous session that never terminated.
             current.captureEndedObserver?.cancel()
@@ -126,9 +159,9 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
             current.diskObserver = nil
             current.ticker?.cancel()
             current.ticker = nil
-            return true
+            return current.preparationGeneration
         }
-        guard claimed else {
+        guard let generation else {
             Self.log.notice("start ignored: a session is already in progress")
             return
         }
@@ -163,24 +196,32 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
         let captureEnded = captureService.observeCaptureEnded()
         guards.start(monitoring: settings.destinationDirectory)
 
-        do {
-            try await captureService.startCapture(source: source, settings: settings, sink: writer)
-        } catch {
-            // Nothing was captured, so there is nothing to finalize or repair: close the
-            // writer, drop the empty file, and release the guards.
-            _ = await writer.finish()
-            guards.stop()
-            artifacts.discardIfEmpty()
-            state.withLock { current in
-                current.writer = nil
-                current.artifacts = nil
-            }
-            fail(message: "録画を開始できませんでした: \(error.localizedDescription)")
+        switch await startCaptureWithinTimeout(source: source, settings: settings, writer: writer) {
+        case .started:
+            break
+        case .failed(let message):
+            await failPreparation(
+                generation: generation,
+                writer: writer,
+                artifacts: artifacts,
+                message: "録画を開始できませんでした: \(message)"
+            )
+            return
+        case .timedOut:
+            await failPreparation(
+                generation: generation,
+                writer: writer,
+                artifacts: artifacts,
+                message: "録画を開始できませんでした(応答がありません)"
+            )
             return
         }
 
         let startedAt = Date()
-        state.withLock { current in
+        let started = state.withLock { current -> Bool in
+            guard case .preparing = current.phase,
+                  current.preparationGeneration == generation
+            else { return false }
             current.phase = .recording
             current.startedAt = startedAt
             current.ticker = Task { [self] in await runTicker() }
@@ -210,7 +251,12 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
                     }
                 }
             }
+            return true
         }
+        // `startCaptureWithinTimeout` leaves a timed-out call running so it can complete
+        // without cancellation hazards. Its later result reaches no state transition; this
+        // generation check also protects a future session if an implementation changes.
+        guard started else { return }
         Self.log.info("recording \(artifacts.outputURL.lastPathComponent, privacy: .public)")
         emitProgress()
     }
@@ -351,6 +397,89 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
         }
     }
 
+    /// Runs `startCapture` and its deadline in independent tasks, for the same reason as
+    /// `stopCaptureWithinTimeout`: cancellation of the caller must not collapse the bound.
+    /// The start task intentionally has no state-mutating continuation after yielding, so a
+    /// call that returns after the deadline is ignored rather than causing a second state
+    /// transition.
+    private func startCaptureWithinTimeout(
+        source: CaptureSource,
+        settings: RecordingSettings,
+        writer: AssetWriterCoordinator
+    ) async -> PreparationOutcome {
+        await Task { [captureService, preparingTimeout] () -> PreparationOutcome in
+            let (outcomes, continuation) = AsyncStream<PreparationOutcome>.makeStream(
+                bufferingPolicy: .bufferingNewest(1)
+            )
+            // The stream buffer keeps only one value, so let the two racers choose their
+            // winner before yielding. Otherwise a start that returns just after the
+            // deadline could overwrite the timeout before this task consumes it.
+            let resolution = PreparationRace()
+            Task {
+                do {
+                    try await captureService.startCapture(source: source, settings: settings, sink: writer)
+                    let lostRace = !resolution.tryWin(.started)
+                    if lostRace {
+                        // A late successful start may have activated an SCStream after the
+                        // session has already failed. Release that stream, but never publish
+                        // a second state transition.
+                        await captureService.stopCapture()
+                    } else {
+                        continuation.yield(.started)
+                    }
+                } catch {
+                    let outcome = PreparationOutcome.failed(error.localizedDescription)
+                    let wonRace = resolution.tryWin(outcome)
+                    if wonRace {
+                        continuation.yield(outcome)
+                    }
+                }
+            }
+            let deadline = Task {
+                try? await Task.sleep(for: preparingTimeout)
+                guard !Task.isCancelled else { return }
+                let wonRace = resolution.tryWin(.timedOut)
+                if wonRace {
+                    continuation.yield(.timedOut)
+                }
+            }
+            for await outcome in outcomes {
+                deadline.cancel()
+                return outcome
+            }
+            deadline.cancel()
+            return .timedOut
+        }.value
+    }
+
+    /// Releases a failed preparation exactly once. The phase remains `.preparing` through
+    /// cleanup so acknowledgement cannot begin a newer generation until all artifacts and
+    /// guards of this attempt are gone.
+    private func failPreparation(
+        generation: Int,
+        writer: AssetWriterCoordinator,
+        artifacts: RecordingArtifacts,
+        message: String
+    ) async {
+        let isCurrent = state.withLock { current in
+            guard case .preparing = current.phase else { return false }
+            return current.preparationGeneration == generation
+        }
+        guard isCurrent else { return }
+
+        _ = await writer.finish()
+        guards.stop()
+        artifacts.discardIfEmpty()
+        state.withLock { current in
+            guard case .preparing = current.phase,
+                  current.preparationGeneration == generation
+            else { return }
+            current.writer = nil
+            current.artifacts = nil
+        }
+        fail(message: message, generation: generation)
+    }
+
     /// `nil` when the session ended normally; otherwise what the user needs to be told.
     private static func failureMessage(
         reason: EndReason,
@@ -459,10 +588,13 @@ final class RecordingSession: RecordingSessionControlling, @unchecked Sendable {
 
     // MARK: - State publishing
 
-    private func fail(message: String, from expected: Phase = .preparing) {
+    private func fail(message: String, from expected: Phase = .preparing, generation: Int? = nil) {
         let changed = state.withLock { current -> Bool in
             switch (current.phase, expected) {
             case (.preparing, .preparing), (.finishing, .finishing):
+                if let generation, current.preparationGeneration != generation {
+                    return false
+                }
                 current.phase = .failed
                 current.lastState = .failed(message: message)
                 return true

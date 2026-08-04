@@ -106,6 +106,55 @@ struct RecordingSessionTests {
         #expect(!message.contains("保存されています"), "an empty recording must not be presented as saved")
     }
 
+    @Test("A preparing timeout fails and ignores a late successful start")
+    func preparingTimeoutIgnoresLateSuccess() async {
+        let directory = TempDirectory()
+        defer { directory.remove() }
+        let capture = FakeCaptureService(blocksStart: true)
+        let guards = FakeSessionGuards()
+        let session = RecordingSession(
+            captureService: capture,
+            guards: guards,
+            preparingTimeout: .milliseconds(10)
+        )
+
+        await session.start(source: makeTestSource(), settings: directory.settings())
+
+        guard case .failed(let message) = await currentState(session) else {
+            Issue.record("a blocked start should time out into failed")
+            return
+        }
+        #expect(message.contains("応答がありません"))
+        #expect(guards.stopCallCount == 1)
+        #expect(directory.contents().isEmpty)
+
+        capture.releaseBlockedStart()
+        await waitForFakeCompletion { capture.completedStartCallCount == 1 }
+
+        #expect(await currentState(session) == .failed(message: message), "the late start must not re-enter recording")
+        #expect(capture.stopCallCount == 1, "a late successful start must be released")
+    }
+
+    @Test("A preparing timeout ignores a late start failure")
+    func preparingTimeoutIgnoresLateFailure() async {
+        let directory = TempDirectory()
+        defer { directory.remove() }
+        let capture = FakeCaptureService(startError: FakeCaptureError.startRefused, blocksStart: true)
+        let session = RecordingSession(captureService: capture, preparingTimeout: .milliseconds(10))
+
+        await session.start(source: makeTestSource(), settings: directory.settings())
+        guard case .failed(let message) = await currentState(session) else {
+            Issue.record("a blocked start should time out into failed")
+            return
+        }
+
+        capture.releaseBlockedStart()
+        await waitForFakeCompletion { capture.completedStartCallCount == 1 }
+
+        #expect(await currentState(session) == .failed(message: message), "the late failure must not replace the timeout")
+        #expect(capture.stopCallCount == 0)
+    }
+
     // MARK: - failed -> idle
 
     @Test("A start that cannot begin lands in failed, and acknowledging returns to idle")

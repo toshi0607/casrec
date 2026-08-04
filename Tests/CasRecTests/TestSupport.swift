@@ -103,21 +103,38 @@ final class FakeSessionGuards: SessionGuarding, @unchecked Sendable {
 final class FakeCaptureService: CaptureServicing, @unchecked Sendable {
     private struct State {
         var startCalls = 0
+        var completedStartCalls = 0
         var stopCalls = 0
         var startError: Error?
+        var blocksStart = false
         var endedContinuation: AsyncStream<CaptureEndReason>.Continuation?
     }
 
     private let state = Mutex(State())
+    private let startGate: AsyncStream<Void>
+    private let startGateContinuation: AsyncStream<Void>.Continuation
 
-    init(startError: Error? = nil) {
-        state.withLock { $0.startError = startError }
+    init(startError: Error? = nil, blocksStart: Bool = false) {
+        let (startGate, startGateContinuation) = AsyncStream<Void>.makeStream()
+        self.startGate = startGate
+        self.startGateContinuation = startGateContinuation
+        state.withLock {
+            $0.startError = startError
+            $0.blocksStart = blocksStart
+        }
     }
 
     /// How many times `finalize` has run: it calls `stopCapture()` exactly once per
     /// teardown, which makes this the cleanest observable for "the session ended once".
     var stopCallCount: Int { state.withLock { $0.stopCalls } }
     var startCallCount: Int { state.withLock { $0.startCalls } }
+    var completedStartCallCount: Int { state.withLock { $0.completedStartCalls } }
+
+    /// Lets a test complete a deliberately blocked `startCapture` after its session has
+    /// already taken another path, such as the preparing timeout.
+    func releaseBlockedStart() {
+        startGateContinuation.yield(())
+    }
 
     /// Delivers a capture-ended event as ScreenCaptureKit's `didStopWithError` relay would.
     func endCapture(_ reason: CaptureEndReason) {
@@ -134,10 +151,16 @@ final class FakeCaptureService: CaptureServicing, @unchecked Sendable {
     }
 
     func startCapture(source: CaptureSource, settings: RecordingSettings, sink: any SampleConsuming) async throws {
-        let error = state.withLock { current -> Error? in
+        let (error, blocksStart) = state.withLock { current -> (Error?, Bool) in
             current.startCalls += 1
-            return current.startError
+            return (current.startError, current.blocksStart)
         }
+        if blocksStart {
+            for await _ in startGate {
+                break
+            }
+        }
+        state.withLock { $0.completedStartCalls += 1 }
         if let error { throw error }
     }
 
@@ -216,6 +239,15 @@ func currentState(_ session: RecordingSession) async -> RecordingState {
         return state
     }
     return .idle
+}
+
+/// Spins the cooperative executor rather than sleeping wall-clock time, for tests that
+/// need to observe completion of an already-unblocked fake operation.
+func waitForFakeCompletion(_ predicate: @escaping @Sendable () -> Bool) async {
+    for _ in 0..<100 {
+        if predicate() { return }
+        await Task.yield()
+    }
 }
 
 extension RecordingState {

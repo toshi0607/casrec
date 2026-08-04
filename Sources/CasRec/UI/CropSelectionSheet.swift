@@ -108,6 +108,8 @@ struct CropSelectionSheet: View {
 /// pixels. The only coordinate conversion that reaches capture setup remains in
 /// `CropGeometry`, which is unit-tested independently of SwiftUI.
 private struct CropPreviewCanvas: View {
+    private static let coordinateSpaceName = "cropCanvas"
+
     let image: CGImage
     let previewPixelSize: CGSize
     @Binding var selectionInPreviewPixels: CGRect?
@@ -141,8 +143,9 @@ private struct CropPreviewCanvas: View {
                     .contentShape(Rectangle())
                     .frame(width: imageFrame.width, height: imageFrame.height)
                     .position(x: imageFrame.midX, y: imageFrame.midY)
-                    .gesture(selectionGesture(imageDisplaySize: imageFrame.size))
+                    .gesture(selectionGesture(imageFrame: imageFrame))
             }
+            .coordinateSpace(name: Self.coordinateSpaceName)
         }
     }
 
@@ -173,18 +176,17 @@ private struct CropPreviewCanvas: View {
         )
     }
 
-    private func selectionGesture(imageDisplaySize: CGSize) -> some Gesture {
-        DragGesture(minimumDistance: 0)
+    private func selectionGesture(imageFrame: CGRect) -> some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.coordinateSpaceName))
             .onChanged { value in
-                let viewSelection = CGRect(
-                    x: min(value.startLocation.x, value.location.x),
-                    y: min(value.startLocation.y, value.location.y),
-                    width: abs(value.location.x - value.startLocation.x),
-                    height: abs(value.location.y - value.startLocation.y)
+                let viewSelection = CropGeometry.imageLocalSelectionRect(
+                    from: value.startLocation,
+                    to: value.location,
+                    imageFrame: imageFrame
                 )
                 selectionInPreviewPixels = CropGeometry.previewPixelRect(
                     from: viewSelection,
-                    imageDisplaySize: imageDisplaySize,
+                    imageDisplaySize: imageFrame.size,
                     previewPixelSize: previewPixelSize
                 )
             }

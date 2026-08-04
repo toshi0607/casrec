@@ -106,6 +106,29 @@ enum CropGeometry {
         )
         return converted.standardized.intersection(CGRect(origin: .zero, size: previewPixelSize))
     }
+
+    /// Converts two drag locations in canvas coordinates into an image-local selection.
+    /// The fitted image can be offset inside the canvas when letterboxing is present.
+    static func imageLocalSelectionRect(
+        from canvasStartLocation: CGPoint,
+        to canvasLocation: CGPoint,
+        imageFrame: CGRect
+    ) -> CGRect {
+        let start = CGPoint(
+            x: canvasStartLocation.x - imageFrame.minX,
+            y: canvasStartLocation.y - imageFrame.minY
+        )
+        let location = CGPoint(
+            x: canvasLocation.x - imageFrame.minX,
+            y: canvasLocation.y - imageFrame.minY
+        )
+        return CGRect(
+            x: min(start.x, location.x),
+            y: min(start.y, location.y),
+            width: abs(location.x - start.x),
+            height: abs(location.y - start.y)
+        )
+    }
 }
 
 /// Shared output sizing rule. Both whole-window and cropped capture use this exact

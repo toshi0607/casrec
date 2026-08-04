@@ -59,6 +59,56 @@ struct CropGeometryTests {
         #expect(rect == CGRect(x: 0, y: 0, width: 1_000, height: 500))
     }
 
+    @Test("Canvas drag locations map to preview pixels without letterboxing")
+    func mapsCanvasDragWithoutLetterboxing() {
+        let localSelection = CropGeometry.imageLocalSelectionRect(
+            from: CGPoint(x: 100, y: 50),
+            to: CGPoint(x: 400, y: 250),
+            imageFrame: CGRect(x: 0, y: 0, width: 500, height: 300)
+        )
+        let previewSelection = CropGeometry.previewPixelRect(
+            from: localSelection,
+            imageDisplaySize: CGSize(width: 500, height: 300),
+            previewPixelSize: CGSize(width: 1_000, height: 600)
+        )
+
+        #expect(previewSelection == CGRect(x: 200, y: 100, width: 600, height: 400))
+    }
+
+    @Test("Canvas drag locations map to preview pixels with left and right letterboxing")
+    func mapsCanvasDragWithHorizontalLetterboxing() {
+        let imageFrame = CGRect(x: 250, y: 0, width: 500, height: 1_000)
+        let localSelection = CropGeometry.imageLocalSelectionRect(
+            from: CGPoint(x: 300, y: 200),
+            to: CGPoint(x: 700, y: 800),
+            imageFrame: imageFrame
+        )
+        let previewSelection = CropGeometry.previewPixelRect(
+            from: localSelection,
+            imageDisplaySize: imageFrame.size,
+            previewPixelSize: CGSize(width: 1_000, height: 2_000)
+        )
+
+        #expect(previewSelection == CGRect(x: 100, y: 400, width: 800, height: 1_200))
+    }
+
+    @Test("Canvas drag locations map to preview pixels with top and bottom letterboxing")
+    func mapsCanvasDragWithVerticalLetterboxing() {
+        let imageFrame = CGRect(x: 0, y: 250, width: 1_000, height: 500)
+        let localSelection = CropGeometry.imageLocalSelectionRect(
+            from: CGPoint(x: 200, y: 300),
+            to: CGPoint(x: 800, y: 600),
+            imageFrame: imageFrame
+        )
+        let previewSelection = CropGeometry.previewPixelRect(
+            from: localSelection,
+            imageDisplaySize: imageFrame.size,
+            previewPixelSize: CGSize(width: 2_000, height: 1_000)
+        )
+
+        #expect(previewSelection == CGRect(x: 400, y: 100, width: 1_200, height: 600))
+    }
+
     @Test("Selections smaller than the minimum content size are rejected")
     func rejectsTooSmallSelection() {
         let rect = CropGeometry.contentRect(

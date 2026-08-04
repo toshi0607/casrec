@@ -30,15 +30,23 @@ final class RecordingControls {
     private(set) var currentState: RecordingState = .idle
     private(set) var scheduledRecording: ScheduledRecording?
     var settings = RecordingSettings.default
+    var recordingDurationLimit: RecordingDurationLimit = .none {
+        didSet {
+            durationLimitPreferences.save(recordingDurationLimit)
+        }
+    }
     private(set) var outputDirectoryWarning: String?
     private(set) var scheduleBannerMessage: String?
     private(set) var quickStartBannerMessage: String?
+    private(set) var durationLimitBannerMessage: String?
+    private(set) var activeRecordingMaximumDuration: TimeInterval?
     private(set) var selectedSourceID: String?
 
     private let session: any RecordingSessionControlling
     private let captureService: any CaptureServicing
     private let scheduler: RecordingScheduler
     private let outputDirectoryPreferences = OutputDirectoryPreferences()
+    private let durationLimitPreferences: RecordingDurationLimitPreferences
     private var selectedSourceSnapshot: CaptureSource?
     private var stateObserver: Task<Void, Never>?
     private var reservationObserver: Task<Void, Never>?
@@ -47,11 +55,14 @@ final class RecordingControls {
     init(
         session: any RecordingSessionControlling,
         captureService: any CaptureServicing,
-        scheduler: RecordingScheduler
+        scheduler: RecordingScheduler,
+        durationLimitPreferences: RecordingDurationLimitPreferences = RecordingDurationLimitPreferences()
     ) {
         self.session = session
         self.captureService = captureService
         self.scheduler = scheduler
+        self.durationLimitPreferences = durationLimitPreferences
+        self.recordingDurationLimit = durationLimitPreferences.load()
     }
 
     func startObserving() {
@@ -60,6 +71,10 @@ final class RecordingControls {
             guard let self else { return }
             for await state in self.session.observeState() {
                 self.currentState = state
+                if case .recording = state {
+                    continue
+                }
+                self.activeRecordingMaximumDuration = nil
             }
         }
         reservationObserver = Task { [weak self] in
@@ -76,6 +91,8 @@ final class RecordingControls {
                     self.scheduleBannerMessage = "予約時刻になりましたが、録画状態が待機中ではないため開始しませんでした。"
                 case .couldNotStart(let message):
                     self.scheduleBannerMessage = message
+                case .maximumDurationReached(let duration):
+                    self.durationLimitBannerMessage = "録画時間の上限(\(RecordingDurationLimit.label(for: duration)))に達したため停止しました"
                 }
             }
         }
@@ -112,8 +129,9 @@ final class RecordingControls {
             settings: settings,
             session: session
         ) {
-        case .started:
+        case .started(let recordingStartedAt):
             quickStartBannerMessage = nil
+            await configureMaximumDurationStop(recordingStartedAt: recordingStartedAt)
         case .couldNotStart(let message):
             quickStartBannerMessage = message
         }
@@ -130,7 +148,7 @@ final class RecordingControls {
         }
     }
 
-    func scheduleRecording(startAt: Date, source: CaptureSource?, maximumDuration: TimeInterval?) async {
+    func scheduleRecording(startAt: Date, source: CaptureSource?) async {
         refreshOutputDirectory()
         guard startAt > Date() else {
             scheduleBannerMessage = "開始時刻には現在より後の時刻を指定してください。"
@@ -147,7 +165,7 @@ final class RecordingControls {
             startAt: startAt,
             source: source,
             settings: settings,
-            maximumDuration: maximumDuration
+            maximumDuration: recordingDurationLimit.duration
         )
         await scheduler.schedule(
             reservation,
@@ -161,6 +179,9 @@ final class RecordingControls {
             },
             stop: { [session] in
                 await session.stop()
+            },
+            didStart: { [weak self] _, maximumDuration in
+                await self?.setActiveRecordingMaximumDuration(maximumDuration)
             }
         )
     }
@@ -188,8 +209,9 @@ final class RecordingControls {
                     settings: settings,
                     session: session
                 ) {
-                case .started:
+                case .started(let recordingStartedAt):
                     quickStartBannerMessage = nil
+                    await configureMaximumDurationStop(recordingStartedAt: recordingStartedAt)
                 case .couldNotStart(let message):
                     presentQuickStartFailure(message)
                 }
@@ -208,6 +230,21 @@ final class RecordingControls {
         if let mainWindow = NSApp.windows.first(where: { $0.identifier?.rawValue == "main" }) {
             mainWindow.makeKeyAndOrderFront(nil)
         }
+    }
+
+    private func configureMaximumDurationStop(recordingStartedAt: Date) async {
+        let maximumDuration = recordingDurationLimit.duration
+        activeRecordingMaximumDuration = maximumDuration
+        await scheduler.scheduleAutoStop(
+            maximumDuration: maximumDuration,
+            recordingStartedAt: recordingStartedAt,
+            stateProvider: { [session] in await recordingState(of: session) },
+            stop: { [session] in await session.stop() }
+        )
+    }
+
+    private func setActiveRecordingMaximumDuration(_ maximumDuration: TimeInterval?) {
+        activeRecordingMaximumDuration = maximumDuration
     }
 }
 

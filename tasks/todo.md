@@ -219,3 +219,24 @@ Phase 2への持ち越し(opus実測による発見): audio input が有効な�
 - [x] 実機検証(全VERIFIED): Settings欄への上限Picker移動 / 永続化(UserDefaults `thirtyMinutes`+再起動後復元) / HUD「上限 00:30」/ **自動停止の実発火 — 実尺1800.32秒(誤差0.3秒)でfinalize正常・サイドカー掃除済み** / 停止バナー表示。**auto-stopの実発火はPR #11実装以来はじめての実機検証**
 - [x] TCC知見: 別パスのバンドル(隔離クローンのCasRec.app)でも自己署名証明書により画面収録許可が継承され、再許可不要だった
 - **初のメモリ定量データ(30分)**: RSS min 107.5 / max 127.8 / avg 117.4 MB、30サンプル。113→108→113→117→121→124→128MBと緩やかな単調増加。破綻はしないが「横ばい」とは言い切れない。§12 Phase 2完了条件の2時間計測は継続課題(長時間側の外挿はしない)
+
+### モダンUIリデザイン(方向性「デッキ」、2026-08-05)
+
+ユーザー指示: 「プロトタイプなのでモダンなデザインにしてください」。方向性は3案(デッキ/モニター/コンソール)を提示し、**デッキ**を選択。実装は他のコーディングエージェントへ委譲し、当方はタスクごとのレビューを担当する。
+
+- 仕様書: [ui-redesign-spec.md](ui-redesign-spec.md) — トークン(配色・書体・寸法・モーション)、共通コンポーネントのシグネチャ、画面骨格、状態ごとのデッキ表示、文言表、壊してはならない挙動13項目、検証手順
+- タスク分割と委譲プロンプト: [ui-redesign-tasks.md](ui-redesign-tasks.md) — T1〜T7、依存関係、モデル配分、タスクごとのレビューチェックリスト
+
+変更の要旨: タブ → サイドバー + 下部固定トランスポートデッキ。デッキが録画状態機械の唯一の顔になり、両ペインで常時見える(DESIGN.md §7 の「ライブラリタブ表示中は failed バナーが見えない」弱点が解消される)。設定はカード群へ。英日混在の文言を日本語へ統一。赤は録画状態とその失敗のみ、操作色はティール、警告は琥珀。
+
+| Constraint | Source | Verify by |
+|------------|--------|-----------|
+| 情報構成は DESIGN.md §7 を維持(項目を削らない・増やさない) | DESIGN.md | T5/T6 のレビュー |
+| Recording/Capture/Contracts/RecordingControls の API 無変更 | user / 既存設計 | `git diff --stat` が View 層のみ |
+| 既存テストの変更・削除を禁止、件数は減らさない | constraints.md | `make test` の件数 |
+| 警告ゼロを維持 | 既存の運用 | `swift build` の warning 数 |
+| 1 worktree 1 writer、実装エージェントは他エージェントを起動しない | behavior.md | 委譲プロンプトの MUST NOT DO |
+| macOS 15 より新しい API は `#available` なしで使わない | Package.swift `platforms: [.macOS(.v15)]` | ビルド |
+
+- [ ] T1 DesignSystem / [ ] T2 SourcePickerView / [ ] T3 LibraryView / [ ] T4 CropSelectionSheet / [ ] T5 MainView 骨格 / [ ] T6 TransportDeck / [ ] T7 ドキュメント同期
+- 実機確認(レビュー担当): ライト/ダーク、幅780と1600、idle/録画中/失敗/予約済み/権限拒否、キーボードのみでの到達

@@ -25,6 +25,12 @@ struct QuickRecordingActionTests {
         #expect(quickRecordingAction(for: .failed(message: "failure")) == .none)
     }
 
+    @Test("An unacknowledged notice blocks starts but never blocks a stop")
+    func usageNoticeBlocksOnlyStarts() {
+        #expect(quickRecordingAction(for: .idle, allowsRecordingStart: false) == .none)
+        #expect(quickRecordingAction(for: .recording(progress), allowsRecordingStart: false) == .stop)
+    }
+
     private var progress: RecordingProgress {
         RecordingProgress(
             startedAt: .now,

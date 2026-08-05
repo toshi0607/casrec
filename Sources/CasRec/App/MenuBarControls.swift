@@ -4,6 +4,7 @@ import SwiftUI
 
 struct MenuBarControls: View {
     @Bindable var controls: RecordingControls
+    @Bindable var usageNotice: UsageNoticeController
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -12,10 +13,12 @@ struct MenuBarControls: View {
 
             Button(actionTitle) {
                 Task {
-                    await controls.toggleQuickRecording()
+                    await controls.toggleQuickRecording(
+                        allowsRecordingStart: usageNotice.allowsRecordingStart
+                    )
                 }
             }
-            .disabled(quickRecordingAction(for: controls.currentState) == .none)
+            .disabled(currentQuickRecordingAction == .none)
 
             Button("メインウィンドウを開く") {
                 showMainWindow()
@@ -32,7 +35,7 @@ struct MenuBarControls: View {
     @ViewBuilder
     private var statusLabel: some View {
         if let scheduledRecording = controls.scheduledRecording,
-           quickRecordingAction(for: controls.currentState) == .start {
+           currentQuickRecordingAction == .start {
             Text("予約済み \(scheduledRecording.startAt, format: .dateTime.hour().minute())")
         } else {
             switch controls.currentState {
@@ -53,7 +56,14 @@ struct MenuBarControls: View {
     }
 
     private var actionTitle: String {
-        quickRecordingAction(for: controls.currentState) == .stop ? "録画を停止" : "録画を開始"
+        currentQuickRecordingAction == .stop ? "録画を停止" : "録画を開始"
+    }
+
+    private var currentQuickRecordingAction: QuickRecordingAction {
+        quickRecordingAction(
+            for: controls.currentState,
+            allowsRecordingStart: usageNotice.allowsRecordingStart
+        )
     }
 
     private func showMainWindow() {

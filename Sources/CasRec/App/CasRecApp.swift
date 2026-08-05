@@ -14,12 +14,16 @@ struct CasRecApp: App {
             MainView(
                 session: appDelegate.session,
                 captureService: appDelegate.captureService,
-                controls: appDelegate.controls
+                controls: appDelegate.controls,
+                usageNotice: appDelegate.usageNotice
             )
         }
 
         MenuBarExtra {
-            MenuBarControls(controls: appDelegate.controls)
+            MenuBarControls(
+                controls: appDelegate.controls,
+                usageNotice: appDelegate.usageNotice
+            )
         } label: {
             MenuBarIcon(state: appDelegate.controls.currentState)
         }
@@ -35,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let session: RecordingSession
     let scheduler: RecordingScheduler
     let controls: RecordingControls
+    let usageNotice: UsageNoticeController
 
     private var globalHotKey: GlobalHotKey?
 
@@ -48,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             captureService: captureService,
             scheduler: scheduler
         )
+        self.usageNotice = UsageNoticeController()
         super.init()
     }
 
@@ -55,7 +61,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controls.startObserving()
         globalHotKey = GlobalHotKey { [weak self] in
             Task { @MainActor [weak self] in
-                await self?.controls.toggleQuickRecording()
+                guard let self else { return }
+                await self.controls.toggleQuickRecording(
+                    allowsRecordingStart: self.usageNotice.allowsRecordingStart
+                )
             }
         }
         globalHotKey?.register()

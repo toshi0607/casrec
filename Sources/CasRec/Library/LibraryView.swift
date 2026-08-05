@@ -21,24 +21,12 @@ struct LibraryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("ライブラリ")
-                    .font(.title2)
-                Spacer()
-                Button {
-                    Task { await reload() }
-                } label: {
-                    Label("更新", systemImage: "arrow.clockwise")
-                }
-            }
-            .padding()
-
             if !ffmpegIsAvailable {
-                Text("GIF変換・修復には ffmpeg が必要です。`brew install ffmpeg` でインストールできます。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal)
+                NoticeBanner(
+                    .info,
+                    message: "GIF変換・修復には ffmpeg が必要です。`brew install ffmpeg` でインストールできます。"
+                )
+                    .padding(.horizontal, Theme.Metric.gutter)
                     .padding(.bottom, 8)
             }
 
@@ -81,6 +69,15 @@ struct LibraryView: View {
         }
         .task {
             await observeJobs()
+        }
+        .toolbar {
+            Button {
+                Task { await reload() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .accessibilityLabel("一覧を更新")
+            .help("一覧を更新")
         }
         .alert("録画をゴミ箱に移動しますか？", isPresented: Binding(
             get: { entryToDelete != nil },
@@ -203,23 +200,32 @@ private struct LibraryRow: View {
     var body: some View {
         HStack(spacing: 12) {
             LibraryThumbnail(entry: entry)
-                .frame(width: 100, height: 56)
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
                     Text(entry.fileName)
+                        .fontWeight(.medium)
                         .lineLimit(1)
+                        .truncationMode(.middle)
                     if entry.isUnfinalized {
                         Text("未finalize")
                             .font(.caption2)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(Color.orange.opacity(0.16))
+                            .background(Theme.caution.opacity(0.16))
                             .clipShape(Capsule())
                     }
                 }
-                Text("\(entry.dateText)  ・  \(entry.durationText)  ・  \(entry.fileSizeText)")
-                    .font(.caption)
+                HStack(spacing: 4) {
+                    Text(entry.dateText)
+                    Text("・")
+                    Text(entry.durationText)
+                        .font(.machine(11))
+                    Text("・")
+                    Text(entry.fileSizeText)
+                        .font(.machine(11))
+                }
+                .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                 if let jobStatus {
                     JobStatusView(status: jobStatus)
@@ -255,7 +261,7 @@ private struct LibraryRow: View {
             .menuStyle(.borderlessButton)
             .frame(width: 28)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
     }
 }
 
@@ -305,16 +311,16 @@ private struct LibraryThumbnail: View {
             if let image {
                 Image(decorative: image, scale: 1)
                     .resizable()
-                    .scaledToFill()
+                    .aspectRatio(contentMode: .fill)
             } else {
                 Image(systemName: entry.isGIF ? "photo" : "film")
                     .font(.title2)
                     .foregroundStyle(.secondary)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.secondary.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .frame(width: 112, height: 63)
+        .background(Theme.hairline.opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Metric.chipRadius, style: .continuous))
         .task(id: entry.url) {
             guard !entry.isGIF else { return }
             image = await ThumbnailGenerator.image(for: entry.url)

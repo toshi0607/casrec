@@ -101,15 +101,42 @@ struct MainView: View {
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 168, ideal: 176, max: 220)
         } detail: {
-            if sidebarSelection == .library {
-                LibraryView(
-                    directory: controls.settings.destinationDirectory,
-                    refreshToken: libraryRefreshToken,
-                    allowsDeletion: !isRecording && !isTransitioning
+            Group {
+                if sidebarSelection == .library {
+                    LibraryView(
+                        directory: controls.settings.destinationDirectory,
+                        refreshToken: libraryRefreshToken,
+                        allowsDeletion: !isRecording && !isTransitioning
+                    )
+                    .navigationSubtitle("ライブラリ")
+                } else {
+                    recordingPane
+                }
+            }
+            // Keeping the inset outside the pane switch exposes failures while browsing the library.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                TransportDeck(
+                    state: currentState,
+                    maximumDuration: controls.activeRecordingMaximumDuration,
+                    sourceTitle: selectedSource.map { $0.appName ?? $0.title },
+                    canStart: selectedSource != nil && usageNotice.allowsRecordingStart,
+                    start: {
+                        Task {
+                            await controls.startManually(source: selectedSource)
+                        }
+                    },
+                    stop: {
+                        Task {
+                            await session.stop()
+                        }
+                    },
+                    dismissFailure: {
+                        // The state machine intentionally remains failed until the person has seen the error.
+                        Task {
+                            await session.acknowledgeFailure()
+                        }
+                    }
                 )
-                .navigationSubtitle("ライブラリ")
-            } else {
-                recordingPane
             }
         }
         .tint(Theme.accent)
@@ -149,38 +176,23 @@ struct MainView: View {
     }
 
     private var recordingPane: some View {
-        VStack(spacing: 16) {
-            ScrollView {
-                VStack(spacing: Theme.Metric.cardSpacing) {
-                    if let quickStartBannerMessage = controls.quickStartBannerMessage {
-                        quickStartBanner(quickStartBannerMessage)
-                    }
-                    if let durationLimitBannerMessage = controls.durationLimitBannerMessage {
-                        durationLimitBanner(durationLimitBannerMessage)
-                    }
-                    sourceSelectionSection
-                    audioSettingsSection
-                    captureSettingsSection
-                    savePathSection
-                    scheduleSection
+        ScrollView {
+            VStack(spacing: Theme.Metric.cardSpacing) {
+                if let quickStartBannerMessage = controls.quickStartBannerMessage {
+                    quickStartBanner(quickStartBannerMessage)
                 }
-                .frame(maxWidth: Theme.Metric.contentMaxWidth)
-                .frame(maxWidth: .infinity)
-                .padding(Theme.Metric.gutter)
+                if let durationLimitBannerMessage = controls.durationLimitBannerMessage {
+                    durationLimitBanner(durationLimitBannerMessage)
+                }
+                sourceSelectionSection
+                audioSettingsSection
+                captureSettingsSection
+                savePathSection
+                scheduleSection
             }
-
-            Divider()
-
-            recordingControlSection
-
-            if isRecording, case .recording(let progress) = currentState {
-                StatusView(
-                    progress: progress,
-                    maximumDuration: controls.activeRecordingMaximumDuration
-                )
-                    .padding(.horizontal, Theme.Metric.gutter)
-                    .padding(.bottom, 8)
-            }
+            .frame(maxWidth: Theme.Metric.contentMaxWidth)
+            .frame(maxWidth: .infinity)
+            .padding(Theme.Metric.gutter)
         }
         .navigationSubtitle("録画")
     }
@@ -409,91 +421,6 @@ struct MainView: View {
 
             Text("予約はアプリ起動中のみ有効です。アプリを終了すると消えます。")
                 .metaStyle()
-        }
-    }
-
-    private var recordingControlSection: some View {
-        VStack(spacing: 12) {
-            if isRecording {
-                Button(action: {
-                    Task {
-                        await session.stop()
-                    }
-                }) {
-                    HStack {
-                        Image(systemName: "stop.fill")
-                        Text("Stop Recording")
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(12)
-                    .background(Color.red)
-                    .foregroundColor(.white)
-                    .cornerRadius(8)
-                }
-                .disabled(isTransitioning)
-            } else if isTransitioning {
-                HStack {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                    Text(currentState == .preparing ? "Starting..." : "Stopping...")
-                        .font(.caption)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(12)
-                .background(Color.gray.opacity(0.2))
-                .cornerRadius(8)
-            } else if case .failed(let message) = currentState {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundColor(.red)
-                        Text("Recording Failed")
-                            .fontWeight(.semibold)
-                    }
-                    Text(message)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
-                .background(Color.red.opacity(0.1))
-                .cornerRadius(8)
-
-                Button(action: {
-                    // Without this the session stays `failed` forever and every later
-                    // start is ignored (§4: failed -> idle).
-                    Task {
-                        await session.acknowledgeFailure()
-                    }
-                }) {
-                    HStack {
-                        Image(systemName: "xmark.circle.fill")
-                        Text("Dismiss")
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(12)
-                    .background(Color.blue)
-                    .foregroundColor(.white)
-                    .cornerRadius(8)
-                }
-            } else {
-                Button(action: {
-                    Task {
-                        await controls.startManually(source: selectedSource)
-                    }
-                }) {
-                    HStack {
-                        Image(systemName: "record.circle.fill")
-                        Text("Start Recording")
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(12)
-                    .background(Color.blue)
-                    .foregroundColor(.white)
-                    .cornerRadius(8)
-                }
-                .disabled(selectedSource == nil || !usageNotice.allowsRecordingStart)
-            }
         }
     }
 

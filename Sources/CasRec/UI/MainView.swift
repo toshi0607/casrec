@@ -2,6 +2,11 @@ import AppKit
 import SwiftUI
 
 struct MainView: View {
+    private enum SidebarItem: Hashable {
+        case recording
+        case library
+    }
+
     /// Deep link to System Settings › Privacy & Security › Screen Recording (§5.5).
     private static let screenRecordingSettingsURL = URL(
         string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
@@ -29,6 +34,7 @@ struct MainView: View {
     @State private var scheduledStartAt = Date().addingTimeInterval(10 * 60)
     @State private var cropErrorMessage: String?
     @State private var showingCropError = false
+    @State private var sidebarSelection: SidebarItem? = .recording
 
     init(
         session: any RecordingSessionControlling,
@@ -85,22 +91,30 @@ struct MainView: View {
     }
 
     var body: some View {
-        TabView {
-            recordingTab
-                .tabItem {
-                    Label("録画", systemImage: "record.circle")
-                }
-
-            LibraryView(
-                directory: controls.settings.destinationDirectory,
-                refreshToken: libraryRefreshToken,
-                allowsDeletion: !isRecording && !isTransitioning
-            )
-            .tabItem {
+        NavigationSplitView {
+            List(selection: $sidebarSelection) {
+                Label("録画", systemImage: "record.circle")
+                    .tag(SidebarItem.recording)
                 Label("ライブラリ", systemImage: "film.stack")
+                    .tag(SidebarItem.library)
+            }
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(min: 168, ideal: 176, max: 220)
+        } detail: {
+            if sidebarSelection == .library {
+                LibraryView(
+                    directory: controls.settings.destinationDirectory,
+                    refreshToken: libraryRefreshToken,
+                    allowsDeletion: !isRecording && !isTransitioning
+                )
+                .navigationSubtitle("ライブラリ")
+            } else {
+                recordingPane
             }
         }
-        .frame(minWidth: 500, minHeight: 400)
+        .tint(Theme.accent)
+        .navigationTitle("CasRec")
+        .frame(minWidth: 780, minHeight: 580)
         .task(id: isPollingSources) {
             guard isPollingSources else { return }
             await observeSources()
@@ -125,12 +139,19 @@ struct MainView: View {
             )
             .interactiveDismissDisabled()
         }
+        .alert("領域選択エラー", isPresented: $showingCropError) {
+            Button("OK") {
+                showingCropError = false
+            }
+        } message: {
+            Text(cropErrorMessage ?? "領域選択用の画面を取得できませんでした")
+        }
     }
 
-    private var recordingTab: some View {
+    private var recordingPane: some View {
         VStack(spacing: 16) {
             ScrollView {
-                VStack(spacing: 16) {
+                VStack(spacing: Theme.Metric.cardSpacing) {
                     if let quickStartBannerMessage = controls.quickStartBannerMessage {
                         quickStartBanner(quickStartBannerMessage)
                     }
@@ -138,13 +159,14 @@ struct MainView: View {
                         durationLimitBanner(durationLimitBannerMessage)
                     }
                     sourceSelectionSection
-                    cropSelectionSection
                     audioSettingsSection
                     captureSettingsSection
                     savePathSection
                     scheduleSection
                 }
-                .padding(16)
+                .frame(maxWidth: Theme.Metric.contentMaxWidth)
+                .frame(maxWidth: .infinity)
+                .padding(Theme.Metric.gutter)
             }
 
             Divider()
@@ -156,80 +178,50 @@ struct MainView: View {
                     progress: progress,
                     maximumDuration: controls.activeRecordingMaximumDuration
                 )
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, Theme.Metric.gutter)
                     .padding(.bottom, 8)
             }
         }
-        .padding(16)
-        .alert("領域選択エラー", isPresented: $showingCropError) {
-            Button("OK") {
-                showingCropError = false
-            }
-        } message: {
-            Text(cropErrorMessage ?? "領域選択用の画面を取得できませんでした")
-        }
+        .navigationSubtitle("録画")
     }
 
     private func quickStartBanner(_ message: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundColor(.orange)
-            Text(message)
-                .font(.caption)
-                .foregroundColor(.secondary)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(8)
-        .background(Color.orange.opacity(0.1))
-        .cornerRadius(6)
+        NoticeBanner(.caution, message: message)
     }
 
     private func durationLimitBanner(_ message: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "stop.circle.fill")
-                .foregroundColor(.orange)
-            Text(message)
-                .font(.caption)
-                .foregroundColor(.secondary)
-            Spacer()
-        }
-        .padding(8)
-        .background(Color.orange.opacity(0.1))
-        .cornerRadius(6)
+        NoticeBanner(.info, message: message)
     }
 
     private var sourceSelectionSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if let reason = sourcesUnavailable {
-                sourcesUnavailableBanner(reason: reason)
+        SectionCard("対象", accessory: {
+            Picker("対象の種類", selection: $captureMode) {
+                Text("ウィンドウ").tag(CaptureSourceKind.window)
+                Text("画面全体").tag(CaptureSourceKind.display)
             }
-
-            HStack(spacing: 16) {
-                Text("Mode")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
-                Picker("Mode", selection: $captureMode) {
-                    ForEach(CaptureSourceKind.allCases, id: \.self) { kind in
-                        Text(kind == .display ? "Full Screen" : "Window")
-                            .tag(kind)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(maxWidth: 250)
-                .onChange(of: captureMode) {
-                    syncSelection()
-                }
-
-                Spacer()
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityLabel("対象の種類")
+            .frame(maxWidth: 200)
+            .onChange(of: captureMode) {
+                syncSelection()
             }
+        }) {
+            VStack(alignment: .leading, spacing: 12) {
+                if let reason = sourcesUnavailable {
+                    sourcesUnavailableBanner(reason: reason)
+                } else if visibleSources.isEmpty {
+                    Text("録画できるウィンドウがありません")
+                        .metaStyle()
+                } else {
+                    SourcePickerView(
+                        sources: visibleSources,
+                        selectedSourceId: $selectedSourceId
+                    )
+                }
 
-            SourcePickerView(
-                sources: visibleSources,
-                selectedSourceId: $selectedSourceId
-            )
+                cropSelectionSection
+            }
             .onChange(of: selectedSourceId) {
                 clearCrop()
                 controls.selectSource(selectedSource)
@@ -249,11 +241,11 @@ struct MainView: View {
                 .disabled(selectedSource == nil || isRecording || isTransitioning || isLoadingCropPreview)
 
                 if let cropPixelSize {
-                    Text("領域: \(Int(cropPixelSize.width))×\(Int(cropPixelSize.height))")
-                        .font(.caption)
+                    Text("領域 \(Int(cropPixelSize.width))×\(Int(cropPixelSize.height))")
+                        .font(.machine(11))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(Color.accentColor.opacity(0.12))
+                        .background(Theme.accent.opacity(0.14))
                         .clipShape(Capsule())
 
                     Button("クリア") {
@@ -267,145 +259,97 @@ struct MainView: View {
         }
     }
 
-    /// An empty picker is ambiguous — nothing open, or nothing allowed? — so the reason is
-    /// stated, and the permission case gets the one action that resolves it (§5.5).
     @ViewBuilder
     private func sourcesUnavailableBanner(reason: CaptureUnavailableReason) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.orange)
-                Text(reason == .permissionDenied ? "Screen Recording Not Allowed" : "Sources Unavailable")
-                    .fontWeight(.semibold)
-            }
-
-            switch reason {
-            case .permissionDenied:
-                Text("システム設定の「プライバシーとセキュリティ > 画面収録」で CasRec を許可してください。")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
+        switch reason {
+        case .permissionDenied:
+            NoticeBanner(
+                .caution,
+                title: "画面収録が許可されていません",
+                message: "システム設定の「プライバシーとセキュリティ > 画面収録」で CasRec を許可してください。"
+            ) {
                 if let url = Self.screenRecordingSettingsURL {
-                    Button("Open System Settings") {
+                    Button("システム設定を開く") {
                         NSWorkspace.shared.open(url)
                     }
                 }
-
                 Text("許可した後は、CasRec を再起動すると録画できるようになります。")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            case .failed(let message):
-                Text(message)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    .metaStyle()
             }
+        case .failed(let message):
+            NoticeBanner(.caution, title: "録画対象を取得できません", message: message)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(Color.orange.opacity(0.1))
-        .cornerRadius(8)
     }
 
     private var audioSettingsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Audio")
-                .font(.caption)
-                .foregroundColor(.secondary)
-
-            HStack(spacing: 20) {
-                Toggle(isOn: $controls.settings.captureAppAudio) {
-                    Text("App Audio")
-                        .font(.caption)
-                }
-
-                Toggle(isOn: $controls.settings.captureMicrophone) {
-                    Text("Microphone")
-                        .font(.caption)
-                }
-
-                Spacer()
+        SectionCard("音声") {
+            HStack(spacing: 24) {
+                Toggle("アプリの音声", isOn: $controls.settings.captureAppAudio)
+                Toggle("マイク", isOn: $controls.settings.captureMicrophone)
             }
+            .toggleStyle(.switch)
+            .controlSize(.small)
 
             Text("マイクには周囲の会話が含まれることがあります。必要に応じて参加者へ通知し、同意を得てください。")
-                .font(.caption2)
-                .foregroundColor(.secondary)
+                .metaStyle()
         }
     }
 
     private var captureSettingsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Settings")
-                .font(.caption)
-                .foregroundColor(.secondary)
-
-            HStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Codec")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    Picker("Codec", selection: $controls.settings.codec) {
+        SectionCard("画質と上限") {
+            Grid(horizontalSpacing: 20, verticalSpacing: 12) {
+                GridRow {
+                    FieldRow("コーデック") {
+                    Picker("コーデック", selection: $controls.settings.codec) {
                         Text("HEVC").tag(VideoCodec.hevc)
                         Text("H.264").tag(VideoCodec.h264)
                     }
                     .pickerStyle(.menu)
                     .labelsHidden()
                     .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("録画時間の上限")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    Picker("録画時間の上限", selection: $controls.recordingDurationLimit) {
-                        ForEach(RecordingDurationLimit.allCases) { limit in
-                            Text(limit.pickerLabel).tag(limit)
+                    }
+                    FieldRow("解像度") {
+                        Picker("解像度", selection: $controls.settings.scalePercent) {
+                            Text("100%").tag(100)
+                            Text("50%").tag(50)
                         }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Resolution")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    Picker("Resolution", selection: $controls.settings.scalePercent) {
-                        Text("100%").tag(100)
-                        Text("50%").tag(50)
+                GridRow {
+                    FieldRow("フレームレート") {
+                        Picker("フレームレート", selection: $controls.settings.fps) {
+                            Text("30").tag(30)
+                            Text("60").tag(60)
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("FPS")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    Picker("FPS", selection: $controls.settings.fps) {
-                        Text("30").tag(30)
-                        Text("60").tag(60)
+                    FieldRow("録画時間の上限") {
+                        Picker("録画時間の上限", selection: $controls.recordingDurationLimit) {
+                            ForEach(RecordingDurationLimit.allCases) { limit in
+                                Text(limit.pickerLabel).tag(limit)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-
-                Spacer()
             }
         }
     }
 
     private var savePathSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        SectionCard("保存先") {
             HStack(spacing: 8) {
-                Text("Save to")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
                 Text(controls.settings.destinationDirectory.path)
-                    .font(.caption)
+                    .font(.machine(11))
                     .lineLimit(1)
+                    .truncationMode(.middle)
                 Spacer()
                 Button("変更…") {
                     chooseOutputDirectory()
@@ -414,33 +358,23 @@ struct MainView: View {
             }
 
             if let outputDirectoryWarning = controls.outputDirectoryWarning {
-                HStack(spacing: 8) {
-                    Image(systemName: "externaldrive.fill.badge.exclamationmark")
-                        .foregroundColor(.yellow)
-                    Text(outputDirectoryWarning)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Spacer()
-                }
-                .padding(8)
-                .background(Color.yellow.opacity(0.1))
-                .cornerRadius(6)
+                NoticeBanner(.caution, message: outputDirectoryWarning)
             }
         }
     }
 
     private var scheduleSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("予約")
-                .font(.caption)
-                .foregroundColor(.secondary)
-
+        SectionCard("予約") {
             if let scheduledRecording = controls.scheduledRecording {
                 TimelineView(.periodic(from: .now, by: 60)) { _ in
                     let remainingMinutes = max(0, Int(ceil(scheduledRecording.startAt.timeIntervalSinceNow / 60)))
-                    HStack {
-                        Text("予約済み: \(scheduledRecording.startAt, format: .dateTime.hour().minute()) 開始 (あと\(remainingMinutes)分)")
-                            .font(.caption)
+                    HStack(spacing: 6) {
+                        Text("予約済み")
+                        Text(scheduledRecording.startAt, format: .dateTime.hour().minute())
+                            .font(.machine(11))
+                        Text("開始")
+                        Text("あと\(remainingMinutes)分")
+                            .metaStyle()
                         Spacer()
                         Button("キャンセル") {
                             Task {
@@ -448,6 +382,9 @@ struct MainView: View {
                             }
                         }
                     }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Theme.accent.opacity(0.10), in: Capsule())
                 }
             } else {
                 HStack(spacing: 12) {
@@ -467,22 +404,11 @@ struct MainView: View {
             }
 
             if let scheduleBannerMessage = controls.scheduleBannerMessage {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
-                    Text(scheduleBannerMessage)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(8)
-                .background(Color.orange.opacity(0.1))
-                .cornerRadius(6)
+                NoticeBanner(.caution, message: scheduleBannerMessage)
             }
 
             Text("予約はアプリ起動中のみ有効です。アプリを終了すると消えます。")
-                .font(.caption2)
-                .foregroundColor(.secondary)
+                .metaStyle()
         }
     }
 

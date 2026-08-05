@@ -10,6 +10,7 @@ struct MainView: View {
     let session: any RecordingSessionControlling
     let captureService: any CaptureServicing
     @Bindable var controls: RecordingControls
+    @Bindable var usageNotice: UsageNoticeController
 
     @State private var sources: [CaptureSource] = []
     /// Non-nil while the source list cannot be read — most importantly when screen
@@ -32,11 +33,13 @@ struct MainView: View {
     init(
         session: any RecordingSessionControlling,
         captureService: any CaptureServicing,
-        controls: RecordingControls
+        controls: RecordingControls,
+        usageNotice: UsageNoticeController
     ) {
         self.session = session
         self.captureService = captureService
         self.controls = controls
+        self.usageNotice = usageNotice
         _selectedSourceId = State(initialValue: controls.selectedSourceID)
     }
 
@@ -114,6 +117,13 @@ struct MainView: View {
                 controls.settings.sourceCropRect = rect
                 cropPixelSize = pixelSize
             }
+        }
+        .sheet(isPresented: $usageNotice.isPresented) {
+            UsageNoticeSheet(
+                acknowledge: usageNotice.acknowledge,
+                exit: { NSApp.terminate(nil) }
+            )
+            .interactiveDismissDisabled()
         }
     }
 
@@ -253,6 +263,7 @@ struct MainView: View {
 
                 Spacer()
             }
+
         }
     }
 
@@ -314,6 +325,10 @@ struct MainView: View {
 
                 Spacer()
             }
+
+            Text("マイクには周囲の会話が含まれることがあります。必要に応じて参加者へ通知し、同意を得てください。")
+                .font(.caption2)
+                .foregroundColor(.secondary)
         }
     }
 
@@ -447,7 +462,7 @@ struct MainView: View {
                             )
                         }
                     }
-                    .disabled(selectedSource == nil)
+                    .disabled(selectedSource == nil || !usageNotice.allowsRecordingStart)
                 }
             }
 
@@ -551,7 +566,7 @@ struct MainView: View {
                     .foregroundColor(.white)
                     .cornerRadius(8)
                 }
-                .disabled(selectedSource == nil)
+                .disabled(selectedSource == nil || !usageNotice.allowsRecordingStart)
             }
         }
     }

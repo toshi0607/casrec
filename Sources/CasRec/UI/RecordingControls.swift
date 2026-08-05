@@ -10,10 +10,13 @@ enum QuickRecordingAction: Equatable {
     case none
 }
 
-func quickRecordingAction(for state: RecordingState) -> QuickRecordingAction {
+func quickRecordingAction(
+    for state: RecordingState,
+    allowsRecordingStart: Bool = true
+) -> QuickRecordingAction {
     switch state {
     case .idle:
-        .start
+        allowsRecordingStart ? .start : .none
     case .recording:
         .stop
     case .preparing, .finishing, .failed:
@@ -137,8 +140,11 @@ final class RecordingControls {
         }
     }
 
-    func toggleQuickRecording() async {
-        switch quickRecordingAction(for: currentState) {
+    func toggleQuickRecording(allowsRecordingStart: Bool = true) async {
+        switch quickRecordingAction(
+            for: currentState,
+            allowsRecordingStart: allowsRecordingStart
+        ) {
         case .start:
             await startQuickly()
         case .stop:

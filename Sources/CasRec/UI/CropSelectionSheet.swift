@@ -60,7 +60,7 @@ struct CropSelectionSheet: View {
     var body: some View {
         VStack(spacing: 16) {
             Text("録画する領域をドラッグで選択")
-                .font(.headline)
+                .cardTitleStyle()
 
             CropPreviewCanvas(
                 image: preview.image,
@@ -71,13 +71,12 @@ struct CropSelectionSheet: View {
 
             HStack {
                 if let selectedPixelSize {
-                    Text("領域: \(Int(selectedPixelSize.width))×\(Int(selectedPixelSize.height))")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    Text("領域 \(Int(selectedPixelSize.width))×\(Int(selectedPixelSize.height))")
+                        .font(.machine(11))
+                        .foregroundStyle(Theme.accent)
                 } else {
                     Text("最小 2 pt × 2 pt の領域を選択してください")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .metaStyle()
                 }
 
                 Spacer()
@@ -131,9 +130,15 @@ private struct CropPreviewCanvas: View {
                         for: selectionInPreviewPixels,
                         in: imageFrame
                     )
+                    Path { path in
+                        path.addRect(imageFrame)
+                        path.addRect(selection)
+                    }
+                    .fill(Color.black.opacity(0.18), style: FillStyle(eoFill: true))
+                    .allowsHitTesting(false)
+
                     Rectangle()
-                        .fill(Color.black.opacity(0.18))
-                        .overlay(Rectangle().stroke(Color.accentColor, lineWidth: 2))
+                        .stroke(Theme.accent, lineWidth: 2)
                         .frame(width: selection.width, height: selection.height)
                         .position(x: selection.midX, y: selection.midY)
                         .allowsHitTesting(false)

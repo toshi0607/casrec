@@ -26,7 +26,6 @@ struct MainView: View {
     @State private var cropPixelSize: CGSize?
     @State private var isLoadingCropPreview = false
     @State private var scheduledStartAt = Date().addingTimeInterval(10 * 60)
-    @State private var scheduledMaximumDuration: RecordingDurationLimit = .none
     @State private var cropErrorMessage: String?
     @State private var showingCropError = false
 
@@ -125,6 +124,9 @@ struct MainView: View {
                     if let quickStartBannerMessage = controls.quickStartBannerMessage {
                         quickStartBanner(quickStartBannerMessage)
                     }
+                    if let durationLimitBannerMessage = controls.durationLimitBannerMessage {
+                        durationLimitBanner(durationLimitBannerMessage)
+                    }
                     sourceSelectionSection
                     cropSelectionSection
                     audioSettingsSection
@@ -140,7 +142,10 @@ struct MainView: View {
             recordingControlSection
 
             if isRecording, case .recording(let progress) = currentState {
-                StatusView(progress: progress)
+                StatusView(
+                    progress: progress,
+                    maximumDuration: controls.activeRecordingMaximumDuration
+                )
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
             }
@@ -165,6 +170,20 @@ struct MainView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(8)
+        .background(Color.orange.opacity(0.1))
+        .cornerRadius(6)
+    }
+
+    private func durationLimitBanner(_ message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "stop.circle.fill")
+                .foregroundColor(.orange)
+            Text(message)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Spacer()
+        }
         .padding(8)
         .background(Color.orange.opacity(0.1))
         .cornerRadius(6)
@@ -319,6 +338,20 @@ struct MainView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
+                    Text("録画時間の上限")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Picker("録画時間の上限", selection: $controls.recordingDurationLimit) {
+                        ForEach(RecordingDurationLimit.allCases) { limit in
+                            Text(limit.pickerLabel).tag(limit)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
                     Text("Resolution")
                         .font(.caption2)
                         .foregroundColor(.secondary)
@@ -406,19 +439,11 @@ struct MainView: View {
                     DatePicker("開始時刻", selection: $scheduledStartAt)
                         .labelsHidden()
 
-                    Picker("録画時間の上限", selection: $scheduledMaximumDuration) {
-                        ForEach(RecordingDurationLimit.allCases) { limit in
-                            Text(limit.label).tag(limit)
-                        }
-                    }
-                    .pickerStyle(.menu)
-
                     Button("予約する") {
                         Task {
                             await controls.scheduleRecording(
                                 startAt: scheduledStartAt,
-                                source: selectedSource,
-                                maximumDuration: scheduledMaximumDuration.duration
+                                source: selectedSource
                             )
                         }
                     }
@@ -596,35 +621,5 @@ struct MainView: View {
         guard panel.runModal() == .OK, let directory = panel.url else { return }
         guard controls.saveOutputDirectory(directory) else { return }
         libraryRefreshToken += 1
-    }
-}
-
-private enum RecordingDurationLimit: CaseIterable, Identifiable {
-    case none
-    case thirtyMinutes
-    case oneHour
-    case twoHours
-    case threeHours
-
-    var id: Self { self }
-
-    var duration: TimeInterval? {
-        switch self {
-        case .none: nil
-        case .thirtyMinutes: 30 * 60
-        case .oneHour: 60 * 60
-        case .twoHours: 2 * 60 * 60
-        case .threeHours: 3 * 60 * 60
-        }
-    }
-
-    var label: String {
-        switch self {
-        case .none: "録画時間の上限: なし"
-        case .thirtyMinutes: "録画時間の上限: 30分"
-        case .oneHour: "録画時間の上限: 1時間"
-        case .twoHours: "録画時間の上限: 2時間"
-        case .threeHours: "録画時間の上限: 3時間"
-        }
     }
 }

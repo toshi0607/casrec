@@ -2,6 +2,7 @@ import SwiftUI
 
 struct StatusView: View {
     let progress: RecordingProgress
+    let maximumDuration: TimeInterval?
 
     private var elapsedTime: String {
         let elapsed = Date().timeIntervalSince(progress.startedAt)
@@ -67,6 +68,19 @@ struct StatusView: View {
                         .foregroundColor(.secondary)
                     Text(elapsedTime)
                         .font(.system(.body, design: .monospaced))
+                }
+
+                if let maximumDuration,
+                   let limit = RecordingDurationLimit.allCases.first(where: { $0.duration == maximumDuration }) {
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("上限")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(limit.hudLabel)
+                            .font(.system(.body, design: .monospaced))
+                    }
                 }
 
                 Divider()

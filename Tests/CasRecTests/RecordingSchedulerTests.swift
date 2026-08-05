@@ -149,6 +149,73 @@ struct RecordingSchedulerTests {
         #expect(recorder.stopCount == 0)
     }
 
+    @Test("A duration-limited direct start calls the normal stop action")
+    func directStartMaximumDurationStopsRecording() async {
+        let clock = ManualSchedulingClock(now: referenceDate)
+        let recorder = SchedulerCallRecorder()
+        let sessionState = SchedulerSessionState()
+        let scheduler = testScheduler(clock)
+        let startedAt = referenceDate
+
+        sessionState.set(recordingState(startedAt: startedAt))
+        await scheduler.scheduleAutoStop(
+            maximumDuration: 30,
+            recordingStartedAt: startedAt,
+            stateProvider: { sessionState.current },
+            stop: { recorder.recordStop() }
+        )
+
+        await clock.waitForSleepCalls(1)
+        clock.advance(to: startedAt.addingTimeInterval(30))
+        await waitFor { recorder.stopCount == 1 }
+
+        #expect(recorder.stopCount == 1)
+    }
+
+    @Test("A direct-start auto-stop never stops a newer recording")
+    func directStartMaximumDurationDoesNotStopANewerRecording() async {
+        let clock = ManualSchedulingClock(now: referenceDate)
+        let recorder = SchedulerCallRecorder()
+        let sessionState = SchedulerSessionState()
+        let scheduler = testScheduler(clock)
+        let startedAt = referenceDate
+
+        sessionState.set(recordingState(startedAt: startedAt))
+        await scheduler.scheduleAutoStop(
+            maximumDuration: 30,
+            recordingStartedAt: startedAt,
+            stateProvider: { sessionState.current },
+            stop: { recorder.recordStop() }
+        )
+
+        await clock.waitForSleepCalls(1)
+        sessionState.set(recordingState(startedAt: startedAt.addingTimeInterval(5)))
+        clock.advance(to: startedAt.addingTimeInterval(30))
+        await Task.yield()
+
+        #expect(recorder.stopCount == 0)
+    }
+
+    @Test("A direct start without a duration limit does not schedule a timer")
+    func directStartWithoutMaximumDurationDoesNotScheduleTimer() async {
+        let clock = ManualSchedulingClock(now: referenceDate)
+        let recorder = SchedulerCallRecorder()
+        let sessionState = SchedulerSessionState()
+        let scheduler = testScheduler(clock)
+
+        sessionState.set(recordingState(startedAt: referenceDate))
+        await scheduler.scheduleAutoStop(
+            maximumDuration: nil,
+            recordingStartedAt: referenceDate,
+            stateProvider: { sessionState.current },
+            stop: { recorder.recordStop() }
+        )
+        await Task.yield()
+
+        #expect(clock.sleepCallCount == 0)
+        #expect(recorder.stopCount == 0)
+    }
+
     @Test("A new reservation replaces and cancels the old one")
     func newReservationReplacesOldReservation() async {
         let clock = ManualSchedulingClock(now: referenceDate)
@@ -317,6 +384,8 @@ private final class ManualSchedulingClock: @unchecked Sendable {
     func waitForSleepCalls(_ expected: Int) async {
         await waitFor { self.state.withLock(\.sleepCalls) >= expected }
     }
+
+    var sleepCallCount: Int { state.withLock(\.sleepCalls) }
 
     private func sleep(until date: Date) async throws {
         let shouldReturn = state.withLock { current -> Bool in

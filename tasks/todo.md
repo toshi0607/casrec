@@ -238,5 +238,14 @@ Phase 2への持ち越し(opus実測による発見): audio input が有効な�
 | 1 worktree 1 writer、実装エージェントは他エージェントを起動しない | behavior.md | 委譲プロンプトの MUST NOT DO |
 | macOS 15 より新しい API は `#available` なしで使わない | Package.swift `platforms: [.macOS(.v15)]` | ビルド |
 
-- [ ] T1 DesignSystem / [ ] T2 SourcePickerView / [ ] T3 LibraryView / [ ] T4 CropSelectionSheet / [ ] T5 MainView 骨格 / [ ] T6 TransportDeck / [ ] T7 ドキュメント同期
-- 実機確認(レビュー担当): ライト/ダーク、幅780と1600、idle/録画中/失敗/予約済み/権限拒否、キーボードのみでの到達
+- [x] 仕様・タスク分割 — PR #22
+- [x] T1 DesignSystem — PR #23
+- [x] T2 SourcePickerView — PR #26
+- [x] T3 LibraryView — PR #25
+- [x] T4 CropSelectionSheet — PR #24
+- [x] T5 MainView 骨格 — PR #27
+- [x] T6 TransportDeck — PR #28
+- [x] T7 ドキュメント同期 — 本変更（PR番号は作成前）
+- 検証証跡: `swift build` 警告0、`make test` 69 tests / 13 suites。
+- 実機確認済み: ライブラリ表示中もデッキが見えること、一覧最下部がデッキの下から抜けること、最小幅780で崩れないこと、待機状態の描画、ダーク外観。
+- 未検証: ライト外観、録画中・書き出し中・失敗の3状態。予約済み・権限拒否・キーボードのみでの到達はこのリデザイン確認では未検証。

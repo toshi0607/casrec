@@ -296,7 +296,7 @@ Phase 2への持ち越し(opus実測による発見): audio input が有効な�
 - [x] C2 バージョン注入 + `make release`（Codex/Terra high、2026-08-06）
 - [x] C3 README + RELEASING.md（Codex/Terra high、2026-08-06）
 - [x] 外部レビュー指摘3件を解消（2026-08-06、PR #30）
-- [ ] H3 実機での画面収録とマイク録音の確認（Hardened Runtime の唯一の実証。未了なら公開しない）
+- [x] H3 実機での画面収録とマイク録音の確認（2026-08-06、**合格**）
 - [ ] H4 `gh release create` で公開
 
 ### 検証証跡
@@ -330,3 +330,31 @@ Phase 2への持ち越し(opus実測による発見): audio input が有効な�
 - **P2（推奨）**: spec §3 の H2 が「未了」、§3.1 末尾が「単一障害点」のままで、todo.md の完了記録と食い違っていた。spec §3 / §3.1 と tasks 文書の依存グラフ・注記を完了状態へ同期した。
 
 修正後の回帰: `make release VERSION=0.0.0-p1test` 成功・`shasum -c` OK、ad-hoc フォールバック維持（`flags=0x10002(adhoc,runtime)`）、ガード3種すべて非0終了、`swift build -Xswiftc -warnings-as-errors` exit 0、`make test` 69 tests / 13 suites。
+
+### H3 実機検証（2026-08-06、合格）
+
+`make release VERSION=0.1.0-rc0` が生成した ZIP を `ditto -x` で展開した**実際の配布物**を対象に実施。開発用ビルドではない。
+
+事前に `tccutil reset ScreenCapture / Microphone dev.toshi0607.casrec` で旧署名のレコードを掃除し、システム設定から画面収録を再許可（ユーザー操作）。マイクは録画開始時に許可済み。
+
+| 検証項目 | 結果 |
+|---|---|
+| 配布物の署名 | `codesign --verify --deep --strict` 通過、`Authority=CasRec Release` |
+| Hardened Runtime | `flags=0x10000(runtime)` |
+| タイムスタンプ | `Aug 6, 2026 at 20:29:37` |
+| 埋め込み entitlements | `com.apple.security.device.audio-input => true` |
+| 起動・UI | 正常。ソース一覧・サムネイル表示・トグル操作すべて動作 |
+| 録画 | 画面全体 38.2 秒、drop 0、finalize 成功（サイドカー残骸なし） |
+| トラック構成 | HEVC 1 + AAC 2（アプリ音声・マイク） |
+| 映像 | 2940×1912（1470×956 の Retina 2x）、bt709、1112 フレーム、全フレーム走査でデコードエラーなし、先頭・末尾ともシーク可 |
+| 映像の内容 | 末尾フレームを目視。デスクトップ全体がウィジェット含め正しく記録され、色も自然 |
+| **マイク音声** | **stream 1: 3,317,632 samples / mean -35.7 dB / max -9.3 dB** |
+| アプリ音声 | stream 0: 3,659,648 samples / mean -26.6 dB / max -3.7 dB |
+
+**Hardened Runtime 下でマイク entitlement が効いていることの実証**: マイクトラックに 331 万サンプル・非無音の実信号が記録された。entitlement が欠けていればサンプル 0 件になる。アプリ音声より約 9 dB 低く、長さも 3.5 秒短い（マイク初期化の分）という、音響経由で拾った実マイク入力に固有の特徴も一致している。
+
+これで公開前の必須ゲートはすべて通過した。
+
+### Notes 追記
+
+- H3 実施中、私の画面操作ツール（computer-use）のスクリーンショット・フィルタリングが**コンポジタ側で他アプリのウィンドウを隠すため、CasRec の `SCShareableContent` からもそれらが見えなくなり**、ウィンドウ一覧が「録画できるウィンドウがありません」になる現象が起きた。CasRec の不具合ではなく検証環境の副作用。「画面全体」に切り替えることで回避した。次回同じ検証をするときはウィンドウ指定を避けるか、対象アプリを許可リストに入れる。

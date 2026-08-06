@@ -273,3 +273,114 @@ BUILD_NUMBER ?= $(shell git rev-list --count HEAD)
 3. `EXPECTED_LEAF` による検証を、Team ID ベースの DR 検証（`anchor apple generic and certificate leaf[subject.OU] = <TeamID>`）に置き換える
 
 **コード本体は一切変わらない。** ただし移行の瞬間に leaf hash が変わるため、既存利用者の画面収録許可は一度飛ぶ。リリースノートで再許可を案内する必要がある。
+
+---
+
+## 7. Phase B — Homebrew Cask（実装仕様）
+
+作成: 2026-08-06。Phase A（§1〜§6）完了後に着手。
+
+### 7.1 Homebrew の quarantine に関する事実（実測で訂正済み）
+
+| 事実 | 状態 | 根拠 |
+|------|------|------|
+| **`--no-quarantine` は現行 Homebrew には存在しない**（非推奨化のうえ削除済み） | VERIFIED | Homebrew 6.0.14 の `brew install --help` に無い。`brew --repository` の git log に `ffe954753b` "Prepare for deprecation of `--no-quarantine`" と `ba25213c81` "Remove leftover code for `--no-quarantine`"（2026-08-06 実測） |
+| Cask 経由でインストールしても**初回の Gatekeeper 手順は消えない** | VERIFIED | 上記の帰結。当初「cask なら手順が消える」と説明したのは誤りだった |
+| `brew upgrade --cask` は、**利用者が旧版を承認済み かつ 署名 identity が不変**のときに限り Gatekeeper 承認を引き継ぐ | VERIFIED | `Library/Homebrew/cask/upgrade.rb` の `quarantine_release_decision` が `:release` を返す条件。`Quarantine.signing_identity_match` が false なら `:signer_changed` で引き継がない（2026-08-06 実測） |
+
+### 7.2 それでも Phase B をやる理由
+
+初回の Gatekeeper 手順は消えないが、次の3点は実際に得られる。
+
+1. **更新のたびの Gatekeeper 再承認が不要になる** — §7.1 の3行目。`CasRec Release` 証明書で署名 identity を固定してあることが、そのまま条件を満たす。Phase A の決定がここで効く
+2. **チェックサム検証が自動になる** — cask の `sha256` を Homebrew が必ず照合する。README の手動手順を利用者が省略しても改ざんは検出される
+3. **導入・更新・削除が一貫したコマンドになる** — `brew install` / `brew upgrade` / `brew uninstall --zap`
+
+**「初回の Gatekeeper 手順が消える」とは、README にもリリースノートにも書かない。** 事実ではない。
+
+### 7.3 tap リポジトリ
+
+`toshi0607/homebrew-tap`（public）。Homebrew の命名規約により、リポジトリ名は `homebrew-` 接頭辞が必須で、利用者側では省略される（`brew tap toshi0607/tap`）。
+
+cask の置き場所は `Casks/casrec.rb`。
+
+### 7.4 cask の内容
+
+```ruby
+cask "casrec" do
+  version "0.1.0"
+  sha256 "2c79f0f9d61d279b12881b826fd418ed54f8868c2c6bcc2e79b44543f4e81e22"
+
+  url "https://github.com/toshi0607/casrec/releases/download/v#{version}/CasRec-#{version}.zip"
+  name "CasRec"
+  desc "Screen recorder for macOS with application and microphone audio"
+  homepage "https://github.com/toshi0607/casrec"
+
+  livecheck do
+    url :url
+    strategy :github_latest
+  end
+
+  depends_on macos: :sequoia
+
+  app "CasRec.app"
+
+  zap trash: [
+    "~/Library/Preferences/dev.toshi0607.casrec.plist",
+    "~/Library/Saved Application State/dev.toshi0607.casrec.savedState",
+  ]
+end
+```
+
+**`zap` に録画の保存先（既定 `~/Movies/CasRec`）を入れてはならない。** 利用者の録画データであり、アンインストールで消してよいものではない。
+
+`depends_on macos: :sequoia` は `LSMinimumSystemVersion = 15.0`（= macOS 15 Sequoia）に対応する。**文字列比較形式 `">= :sequoia"` は Homebrew で非推奨**であり、シンボル形式でも `brew info` の Requirements は `macOS >= 15` になる（2026-08-06 実測）。
+
+**caveats は書かない。** Gatekeeper の手順は README とリリースノートに集約し、cask では重複させない。
+
+### 7.5 リリース手順への統合
+
+`make release` が出力する version と SHA256 を cask へ反映する作業をスクリプト化する（`scripts/update-cask.sh`）。要件:
+
+1. 引数は version 1つ。省略時はエラー終了
+2. `dist/checksums.txt` から SHA256 を読む。`dist/` が無ければエラー終了（先に `make release` を促す）
+3. tap リポジトリのパスは環境変数 `CASREC_TAP` で受け取る。未設定なら `../homebrew-tap` を既定とし、存在しなければエラー終了
+4. cask の `version` 行と `sha256` 行だけを書き換える。他の行は触らない
+5. 書き換え後、編集したファイルが Homebrew の読む先と一致するかを判定し、一致すればそのまま `brew audit --cask --online toshi0607/tap/casrec` を促す。一致しなければ「トークン audit は別のファイルを読む」旨を警告し、push → `brew update` → audit の順を案内する（§7.8）。スクリプト自身は brew を実行しない
+6. **コミットも push もしない。** 差分を表示して人間に委ねる
+
+RELEASING.md に「7. Homebrew cask を更新する」の節を追加し、`gh release create` の後に置く。
+
+### 7.6 README
+
+英日それぞれのインストール節の先頭に Homebrew の手順を追加する。
+
+```sh
+brew install --cask toshi0607/tap/casrec
+```
+
+`--no-quarantine` を書かない（存在しない）。「初回起動は Gatekeeper にブロックされる」旨は既存の記述がそのまま適用されることを明記し、手順を重複させない。手動ダウンロードの手順は残す。
+
+### 7.7 実測で確定した挙動（2026-08-06）
+
+| 事実 | 状態 | 根拠 |
+|------|------|------|
+| `brew install --cask toshi0607/tap/casrec` は tap 未登録・trust 未設定のクリーンな状態から一行で成功する | VERIFIED | untap + trust.json 無しの状態から実行して成功。Homebrew の Tap Trust 警告は利用者の既存の他 tap に対するもので、本 cask には trust 手順が要らない |
+| インストール後も `.app` の署名は無傷 | VERIFIED | `codesign --verify --deep --strict` 通過、`Authority=CasRec Release`、`flags=0x10000(runtime)`、`Timestamp=Aug 6, 2026 at 20:42:56` |
+| **cask 経由でも quarantine 属性は付く**（= Gatekeeper は適用される） | VERIFIED | `xattr -p com.apple.quarantine /Applications/CasRec.app` → `0381;6a7478aa;;DD3C243F-...`。§7.1 の帰結が実物で確認された |
+| チェックサムは Homebrew が自動照合する | VERIFIED | インストール時に `✔︎ Cask casrec (0.1.0)` |
+| `depends_on macos: ">= :sequoia"` は非推奨形式 | VERIFIED | `Warning: Calling string comparison format for depends_on macos: is deprecated!`。シンボル形式へ修正済み |
+
+### 7.8 `brew audit` が古い cask を見る問題（レビュー指摘、2026-08-06 修正）
+
+| 事実 | 状態 | 根拠 |
+|------|------|------|
+| `brew audit` は **cask トークンしか受け付けず、パス指定は無効化されている** | VERIFIED | `brew audit --cask <path>` → `Error: Calling 'brew audit [path ...]' is disabled! Use 'brew audit [name ...]' instead.`（2026-08-06 実測） |
+| トークン形式の audit は Homebrew 管理下の tap チェックアウトを読む。別クローンを編集していると**更新前の cask を audit して成功してしまう** | VERIFIED | 別クローンだけを version 0.2.0 / sha256 全ゼロに書き換えた状態で `brew audit --cask toshi0607/tap/casrec` が exit 0（2026-08-06 実測） |
+| Homebrew 管理下の tap は push remote 付きの通常の git クローンである | VERIFIED | `git remote -v` → `git@github.com:toshi0607/homebrew-tap`（2026-08-06 実測） |
+
+**採用した修正**: 編集先の既定を Homebrew 管理下のチェックアウトにして、audit 対象と編集対象が構造的に一致するようにした。そこがそのまま commit・push 元にもなる。`CASREC_TAP` で別クローンを指定した場合は、スクリプトが「トークン audit は別のファイルを読む」と警告し、push → `brew update` → audit の順を案内する。
+
+**レビューで提示された修正案（`brew audit --cask "$tap_dir/Casks/casrec.rb"`）は採用できない。** パス指定が無効化されているため。指摘された問題自体は実在し、実測で再現した。
+
+修正後の実測: 既定パスで `./scripts/update-cask.sh 0.2.0` を実行したのち `brew audit --cask --online toshi0607/tap/casrec` が、存在しない v0.2.0 の URL に対して `curl: (56) ... 404` と `Error: 3 problems in 1 cask detected.` を返した。**audit が編集後の内容を読んでいる。**

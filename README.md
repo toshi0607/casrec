@@ -24,6 +24,16 @@ microphone audio. Recordings are stored locally on the user's Mac.
 
 ## Install
 
+Install with Homebrew:
+
+```sh
+brew install --cask toshi0607/tap/casrec
+```
+
+Homebrew automatically verifies the checksum. The Gatekeeper handling on first
+launch is the same as for a manual installation; follow the existing
+instructions below.
+
 Download `CasRec-<version>.zip` and `checksums.txt` from
 [Releases](../../releases). Replace `<version>` with the version shown on the
 release, then extract the ZIP archive and move `CasRec.app` to `/Applications`.
@@ -145,6 +155,14 @@ CasRecは、SwiftUI、ScreenCaptureKit、AVFoundationで作られたmacOS向け�
 - `ffmpeg` は任意で、GIF変換とremuxによる復旧にのみ使用
 
 ### インストール
+
+Homebrewでインストールできます。
+
+```sh
+brew install --cask toshi0607/tap/casrec
+```
+
+Homebrewではチェックサムが自動で検証されます。初回起動時のGatekeeperの扱いは手動インストール時と同じため、以下の既存の手順を参照してください。
 
 [Releases](../../releases) から `CasRec-<version>.zip` と `checksums.txt` をダウンロードします。`<version>` はリリースに表示されているバージョンへ置き換えてください。ZIPアーカイブを展開し、`CasRec.app` を `/Applications` へ移動します。
 

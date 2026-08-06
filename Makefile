@@ -39,8 +39,13 @@ build:
 test:
 	swift test $(TEST_FLAGS)
 
+# The bundle is rebuilt from scratch every time. Overwriting in place would leave
+# files from earlier builds inside CasRec.app, and `codesign --force` then seals
+# them into the signature: `--verify --deep --strict` passes and the leftovers
+# ship in the release ZIP undetected.
 bundle:
 	swift build -c release
+	rm -rf "$(APP_BUNDLE)"
 	mkdir -p "$(MACOS_DIR)" "$(RESOURCES_DIR)"
 	cp "$(BUILD_DIR)/release/$(APP_NAME)" "$(MACOS_DIR)/$(APP_NAME)"
 	cp Resources/Info.plist "$(CONTENTS)/Info.plist"

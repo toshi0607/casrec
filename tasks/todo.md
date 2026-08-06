@@ -295,7 +295,7 @@ Phase 2への持ち越し(opus実測による発見): audio input が有効な�
 - [x] C1 署名オプション + entitlements（Codex/Luna、2026-08-06）
 - [x] C2 バージョン注入 + `make release`（Codex/Terra high、2026-08-06）
 - [x] C3 README + RELEASING.md（Codex/Terra high、2026-08-06）
-- [ ] `/code-review high` を差分に対して実行し指摘を解消
+- [x] 外部レビュー指摘3件を解消（2026-08-06、PR #30）
 - [ ] H3 実機での画面収録とマイク録音の確認（Hardened Runtime の唯一の実証。未了なら公開しない）
 - [ ] H4 `gh release create` で公開
 
@@ -319,3 +319,14 @@ Phase 2への持ち越し(opus実測による発見): audio input が有効な�
 - C2 の成果物に対しレビューで2点だけオーケストレーターが直接修正した（逸脱記録）: (a) `make release` が `dist/checksums.txt` 自身の SHA256 を表示していた無意味な行を、成果物パスと `cat dist/checksums.txt` に置き換え (b) `clean` の削除対象に `dist` を追加（古いリリース成果物が残って誤アップロードされる事故を防ぐ。spec §4 T3 で「追加は可」としていた）。いずれも1〜2行で、再委譲のコストに見合わないと判断した。
 - C3 は Codex(Terra high) が完走（exit 0）。ただし Codex のサンドボックスでは module cache への書き込みが不可で `swift build` が manifest 段階で失敗し、証明書取得もできなかったため、**エージェント側の検証は実質ゼロ**。品質ゲートはすべてオーケストレーターが実行した。
 - 残る品質上の小さな指摘（対応不要と判断、記録のみ）: RELEASING.md §5 の実機確認が「ビルドした `CasRec.app`」を対象としており、利用者が実際に受け取る「zip を展開した `.app`」ではない。quarantine の有無が異なるだけで録画機能の確認としては等価なため、H3 の実施時に zip 展開版で行えばよい。
+
+### PR #30 レビュー対応（2026-08-06）
+
+外部レビューで3件の指摘。いずれも再現手順で確認したうえで修正した。
+
+- **P1（必須・実害あり）**: `bundle` が既存の `CasRec.app` を削除せず3ファイルだけ上書きしていたため、以前のビルド由来のファイルがバンドル内に残り続けた。**実測で確認**: `Contents/Resources/OldIcon.icns` を置いて再 `make bundle` すると、異物が `codesign --force` で `CodeResources` に封入され（出現回数2）、`codesign --verify --deep --strict` は **valid on disk / satisfies its DR** を返し、そのまま release ZIP に混入した。検知手段が無い。修正: `bundle` の先頭で `rm -rf "$(APP_BUNDLE)"`。修正後は同じ手順で異物が消え、`CodeResources` 出現回数0、ZIP 混入なしを確認。
+  - 補足: 最初 `Contents/Frameworks/` に偽 dylib を置いて試したが、これは `codesign` 自体が「code object is not signed at all」で失敗する特殊ケースで、指摘の再現にはならなかった。`Resources/` の平文ファイルが現実的かつ危険なケースである。
+- **P2（必須）**: README の英日「ビルドと起動」が既定署名IDを `CasRec Dev` と説明したままだった（英語 L66 / 日本語 L177）。`CasRec Release` に更新し、「メンテナのローカル自己署名証明書」という説明に揃えた。
+- **P2（推奨）**: spec §3 の H2 が「未了」、§3.1 末尾が「単一障害点」のままで、todo.md の完了記録と食い違っていた。spec §3 / §3.1 と tasks 文書の依存グラフ・注記を完了状態へ同期した。
+
+修正後の回帰: `make release VERSION=0.0.0-p1test` 成功・`shasum -c` OK、ad-hoc フォールバック維持（`flags=0x10002(adhoc,runtime)`）、ガード3種すべて非0終了、`swift build -Xswiftc -warnings-as-errors` exit 0、`make test` 69 tests / 13 suites。

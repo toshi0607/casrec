@@ -63,9 +63,9 @@ make run
 ```
 
 `make bundle` creates and signs `CasRec.app`. `make run` first runs that bundle
-step and then opens the app. The default signing identity, `CasRec Dev`, is a
-local development certificate and will not exist on another Mac. Without a
-certificate, use ad-hoc signing:
+step and then opens the app. The default signing identity, `CasRec Release`, is
+the maintainer's local self-signed certificate and will not exist on another
+Mac. Without a certificate, use ad-hoc signing:
 
 ```sh
 make bundle CODESIGN_IDENTITY=-
@@ -174,7 +174,7 @@ make bundle
 make run
 ```
 
-`make bundle` は `CasRec.app` を作成して署名します。`make run` はバンドル作成後にアプリを開きます。既定の署名IDである `CasRec Dev` はローカル開発用の証明書であり、他のMacには存在しません。証明書がない場合は、ad-hoc署名で実行できます。
+`make bundle` は `CasRec.app` を作成して署名します。`make run` はバンドル作成後にアプリを開きます。既定の署名IDである `CasRec Release` はメンテナのローカル自己署名証明書であり、他のMacには存在しません。証明書がない場合は、ad-hoc署名で実行できます。
 
 ```sh
 make bundle CODESIGN_IDENTITY=-

@@ -249,3 +249,112 @@ Phase 2への持ち越し(opus実測による発見): audio input が有効な�
 - 検証証跡: `swift build` 警告0、`make test` 69 tests / 13 suites。
 - 実機確認済み: ライブラリ表示中もデッキが見えること、一覧最下部がデッキの下から抜けること、最小幅780で崩れないこと、待機状態の描画、ダーク外観。
 - 未検証: ライト外観、録画中・書き出し中・失敗の3状態。予約済み・権限拒否・キーボードのみでの到達はこのリデザイン確認では未検証。
+
+## OSS 配布方式の整備（2026-08-06）
+
+ユーザー質問: 「OSSにしようと思うのですが、配布方法どうするといいですか？」→ 追加で「無料ですませたい」。方針は**無料構成（自己署名 + GitHub Releases）**に決定。実装は Codex へ委譲し、当方はオーケストレーションとレビューを担当する。
+
+- 仕様書: [oss-distribution-spec.md](oss-distribution-spec.md) — 決定事項、実測で確定した前提、人間タスク H1〜H4、実装タスク T1〜T5 の仕様、壊してはならない挙動8項目、Phase B/C の移行差分
+- タスク分割と委譲プロンプト: [oss-distribution-tasks.md](oss-distribution-tasks.md) — C1〜C3、依存関係、Codex 委譲プロンプト、タスクごとのレビューチェックリスト
+
+変更の要旨: Apple Developer Program（$99/年）には当面入らない。ad-hoc 署名ではなく自己署名証明書で署名し、画面収録の TCC 許可がアプリ更新後も維持されるようにする。Hardened Runtime と entitlements とタイムスタンプは**いまのうちに入れておき**、将来 notarization へ移行する日の差分をコード非変更の3点だけに閉じる。秘密鍵は CI に置かず、リリースはローカル署名 + `gh release create` とする。
+
+### Constraints
+
+| Constraint | Source | Verify by |
+|------------|--------|-----------|
+| 無料でおさめる（Developer Program に入らない） | user msg 2026-08-06 | 有料前提の手順が仕様に無いこと |
+| `Sources/` と `Tests/` を一切変更しない | 本作業の性質 | `git diff --stat` に両者が出ない |
+| 既存テストの件数を減らさない | constraints.md | `make test` の件数（現行 69 tests / 13 suites） |
+| 警告ゼロを維持 | 既存の運用 | `swift build -Xswiftc -warnings-as-errors` |
+| `make bundle CODESIGN_IDENTITY=-` の ad-hoc 経路を壊さない | README 記載済みの手順 | 実行して成功すること |
+| `Resources/Info.plist` をリポジトリ上で書き換えない | テンプレートとして扱う | `git status --short Resources/Info.plist` が空 |
+| 自己署名の秘密鍵を CI・リポジトリに置かない | spec §1.1（TCC 許可の継承リスク） | `.github/workflows/` に差分が無いこと |
+| 1 worktree 1 writer、実装エージェントは他エージェントを起動しない | behavior.md | 委譲プロンプトの MUST NOT DO |
+| Codex への委譲は `gpt-5.6-terra` + effort high | user msg 2026-08-06 | 委譲コマンドの `-m` / `-c` |
+
+### Assumptions
+
+| Assumption | Status | Evidence |
+|------------|--------|----------|
+| 自己署名証明書の designated requirement は leaf hash 固定で、リビルドに耐える | VERIFIED | `codesign -d -r- CasRec.app` → `identifier "dev.toshi0607.casrec" and certificate leaf = H"…"`（2026-08-06） |
+| 自己署名証明書でも `--timestamp` が Apple の TSA に受理される | VERIFIED | 実測 `Timestamp=Aug 6, 2026 at 1:22:32`（2026-08-06） |
+| 自己署名証明書でも `--options runtime` が適用される | VERIFIED | 実測 `flags=0x10000(runtime)`（2026-08-06） |
+| ad-hoc 署名に `--timestamp` を渡してもエラーにならず無視される（署名フラグの分岐が不要） | VERIFIED | 実測 exit 0 / `flags=0x10002(adhoc,runtime)` / `Signature=adhoc`（2026-08-06） |
+| 旧証明書 `CasRec Dev` は 2027-08-03 に失効し、作り直すと leaf hash が変わって全利用者の画面収録許可が飛ぶ | VERIFIED・対処済み | `openssl x509 -noout -dates` → `notAfter=Aug 3 08:16:29 2027 GMT`。公開前に有効期間 3650 日の `CasRec Release`（2036-08-02 まで）を作成し移行した（2026-08-06、spec §3.1） |
+| `CasRec Release` で `.app` を署名すると Hardened Runtime・タイムスタンプ・entitlements が同時に成立する | VERIFIED | 実 `.app` で実測（2026-08-06）: `codesign --verify --deep --strict` 成功、`flags=0x10000(runtime)`、`Timestamp=Aug 6, 2026`、`com.apple.security.device.audio-input => true`、DR leaf = `4feed5cfc27c13bd9711823f1edd9a4ee2a96b44` |
+| OpenSSL 3.x 既定の PBE / MAC で作った `.p12` は macOS の `security import` が検証できない | VERIFIED | 実測 `MAC verification failed`（2026-08-06）。`-macalg sha1 -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES` で解決 |
+| Hardened Runtime 有効時、`com.apple.security.device.audio-input` entitlement があればマイク録音が従来どおり動く | UNVERIFIED-ACCEPTED（2026-08-06） | TCC と GUI を伴うため自動検証不可。entitlement が実際に埋め込まれていることは実測済み。緩和策: spec §3 H3 を公開前の必須ゲートとし、通らなければ Hardened Runtime を外して再検討する。外しても notarization 以外の機能は失われない |
+| macOS 15 では Gatekeeper にブロックされたアプリの「右クリック → 開く」回避が使えず、システム設定からの「このまま開く」が必要 | UNVERIFIED-ACCEPTED（2026-08-06） | 手元に配布状態（quarantine 付き）の環境が無いため未実測。緩和策: README には `xattr -dr com.apple.quarantine` を代替手順として併記するため、どちらの挙動でも利用者は起動できる |
+
+### タスク
+
+- [x] H1 有効期間 3650 日の自己署名証明書 `CasRec Release` を作成しログインキーチェーンへ登録（2026-08-06）。fingerprint `4feed5cf...6b44`、有効期限 2036-08-02
+- [x] H2 秘密鍵を `.p12` でリポジトリ外へバックアップ（toshi0607 が実施、2026-08-06）
+- [x] `EXPECTED_LEAF` と spec の fingerprint を新証明書の値へ更新（2026-08-06）
+- [x] C1 署名オプション + entitlements（Codex/Luna、2026-08-06）
+- [x] C2 バージョン注入 + `make release`（Codex/Terra high、2026-08-06）
+- [x] C3 README + RELEASING.md（Codex/Terra high、2026-08-06）
+- [x] 外部レビュー指摘3件を解消（2026-08-06、PR #30）
+- [x] H3 実機での画面収録とマイク録音の確認（2026-08-06、**合格**）
+- [ ] H4 `gh release create` で公開
+
+### 検証証跡
+
+**C3（オーケストレーター再検証、2026-08-06）**: README は追加のみ（削除行 0）で、英語側 `## Install`（Requirements と Build and run の間）と日本語側 `### インストール`（動作環境 と ビルドと起動 の間）が対応。spec §4 T4 の4点（ダウンロード / チェックサム検証 / Gatekeeper 回避 / 未署名の明示）をすべて含み、「右クリック → 開く」は使えない旨も明記。絵文字・バッジ・安全性の断言なし。RELEASING.md は8項目すべてを収録、`tasks/oss-distribution-spec.md` §2.1 へのリンク先も実在を確認。エンドツーエンド: `make release VERSION=0.1.0` → `shasum -c` OK → `ditto -x` 展開後の `.app` が `codesign --verify --deep --strict` 通過、`CFBundleShortVersionString=0.1.0` / `CFBundleVersion=122`。`swift build -Xswiftc -warnings-as-errors` exit 0、`make test` 69 tests / 13 suites。
+
+**C2（オーケストレーター再検証、2026-08-06）**: 12項目すべて通過。(1) `make release`（VERSION 空）エラー終了 (2) `CODESIGN_IDENTITY=-` エラー終了 (3) `make release VERSION=0.0.0-test` 成功 (4) `cd dist && shasum -a 256 -c checksums.txt` → OK (5) zip を `ditto -x` で展開した `.app` が `codesign --verify --deep --strict` 通過、`Authority=CasRec Release` / `flags=0x10000(runtime)` / `Timestamp` 保持 (6) バージョン注入 `CFBundleShortVersionString=0.0.0-test` / `CFBundleVersion=122` (7) `Resources/Info.plist` 無変更 (8) `dist/` は git 無視 (9) **`EXPECTED_LEAF=deadbeef` で release が実際にエラー終了**（ガードが機能） (10) VERSION 未指定の `make bundle` はテンプレート値 `0.1.0` / `2` を維持 (11) `swift build -Xswiftc -warnings-as-errors` exit 0 / `make test` 69 tests / 13 suites (12) `Sources` `Tests` `.github` `Resources/Info.plist` に差分なし。
+
+**C1（オーケストレーター再検証、2026-08-06）**: `make bundle` 成功。`Authority=CasRec Release` / `flags=0x10000(runtime)` / `Timestamp=Aug 6, 2026 at 1:22:32` の3点を確認。DR = `identifier "dev.toshi0607.casrec" and certificate leaf = H"4feed5cfc27c13bd9711823f1edd9a4ee2a96b44"`。埋め込み entitlements は `com.apple.security.device.audio-input => true` の1件のみ。`codesign --verify --deep --strict` 通過。`make bundle CODESIGN_IDENTITY=-` 成功（`flags=0x10002(adhoc,runtime)` / `Signature=adhoc`）。`swift build -Xswiftc -warnings-as-errors` exit 0。`make test` 69 tests / 13 suites。`Sources` `Tests` `Resources/Info.plist` `.github` に差分なし。
+
+### Notes
+
+- 当初「Developer ID が無いと画面収録の許可が維持できない」と説明したが、実測により**自己署名証明書でも維持できる**ことが判明したため訂正した。ad-hoc 署名だけが毎ビルド許可を失う。この差が無料構成を成立させている。
+- H1 は Keychain Access の証明書アシスタント（GUI）ではなく CLI で作成した。有効期間と拡張鍵用途を明示でき、手順を RELEASING.md に転記できるため。`security import` には OpenSSL 3.x 既定ではない PBE / MAC アルゴリズムの指定が要る（spec §3.1）。
+- 開発用の `CasRec Dev` は退役し、開発ビルドも配布ビルドも `CasRec Release` に統一した。識別子が1つなら DR も1つで、ローカル確認がそのまま配布物の検証になる。**副作用として開発機の画面収録許可が一度だけ失効する** — lessons.md 2026-08-03 の手順どおり `tccutil reset ScreenCapture dev.toshi0607.casrec` で掃除してから再許可する。公開前の一度きりで利用者には影響しない。
+- Homebrew Cask は Phase B として今回のスコープから外した。tap リポジトリの新規作成が必要で、Releases の成立が先。
+- GitHub Actions のリリース用ワークフローは**作らない**。自己署名の秘密鍵を CI に置くと、同じ証明書・同じ bundle id で署名された偽アプリが利用者の画面収録許可をダイアログなしで引き継げてしまうため（spec §1.1）。
+- **C1 の委譲中に Codex が `tasks/todo.md` を作業ツリーの HEAD 状態へ戻し、本節の未コミット追記が消失した**（2026-08-06、復元済み）。未追跡の spec / tasks 文書は無事だった。以後、委譲前に追跡ファイルの編集をコミットするか、委譲中は追跡ファイルを編集しない。lessons.md に記録。
+- C2 の委譲中に Codex(Terra) が `ERROR: Selected model is at capacity` で exit 1。**実装ファイルは書き込み済みだったが検証は一切走っていなかった**（`dist/` が生成されていないことで判別）。オーケストレーターが12項目を代わりに実行して全通過を確認した。エージェントの異常終了時は「書き込みの有無」と「検証の有無」を別々に確かめること。
+- C2 の成果物に対しレビューで2点だけオーケストレーターが直接修正した（逸脱記録）: (a) `make release` が `dist/checksums.txt` 自身の SHA256 を表示していた無意味な行を、成果物パスと `cat dist/checksums.txt` に置き換え (b) `clean` の削除対象に `dist` を追加（古いリリース成果物が残って誤アップロードされる事故を防ぐ。spec §4 T3 で「追加は可」としていた）。いずれも1〜2行で、再委譲のコストに見合わないと判断した。
+- C3 は Codex(Terra high) が完走（exit 0）。ただし Codex のサンドボックスでは module cache への書き込みが不可で `swift build` が manifest 段階で失敗し、証明書取得もできなかったため、**エージェント側の検証は実質ゼロ**。品質ゲートはすべてオーケストレーターが実行した。
+- 残る品質上の小さな指摘（対応不要と判断、記録のみ）: RELEASING.md §5 の実機確認が「ビルドした `CasRec.app`」を対象としており、利用者が実際に受け取る「zip を展開した `.app`」ではない。quarantine の有無が異なるだけで録画機能の確認としては等価なため、H3 の実施時に zip 展開版で行えばよい。
+
+### PR #30 レビュー対応（2026-08-06）
+
+外部レビューで3件の指摘。いずれも再現手順で確認したうえで修正した。
+
+- **P1（必須・実害あり）**: `bundle` が既存の `CasRec.app` を削除せず3ファイルだけ上書きしていたため、以前のビルド由来のファイルがバンドル内に残り続けた。**実測で確認**: `Contents/Resources/OldIcon.icns` を置いて再 `make bundle` すると、異物が `codesign --force` で `CodeResources` に封入され（出現回数2）、`codesign --verify --deep --strict` は **valid on disk / satisfies its DR** を返し、そのまま release ZIP に混入した。検知手段が無い。修正: `bundle` の先頭で `rm -rf "$(APP_BUNDLE)"`。修正後は同じ手順で異物が消え、`CodeResources` 出現回数0、ZIP 混入なしを確認。
+  - 補足: 最初 `Contents/Frameworks/` に偽 dylib を置いて試したが、これは `codesign` 自体が「code object is not signed at all」で失敗する特殊ケースで、指摘の再現にはならなかった。`Resources/` の平文ファイルが現実的かつ危険なケースである。
+- **P2（必須）**: README の英日「ビルドと起動」が既定署名IDを `CasRec Dev` と説明したままだった（英語 L66 / 日本語 L177）。`CasRec Release` に更新し、「メンテナのローカル自己署名証明書」という説明に揃えた。
+- **P2（推奨）**: spec §3 の H2 が「未了」、§3.1 末尾が「単一障害点」のままで、todo.md の完了記録と食い違っていた。spec §3 / §3.1 と tasks 文書の依存グラフ・注記を完了状態へ同期した。
+
+修正後の回帰: `make release VERSION=0.0.0-p1test` 成功・`shasum -c` OK、ad-hoc フォールバック維持（`flags=0x10002(adhoc,runtime)`）、ガード3種すべて非0終了、`swift build -Xswiftc -warnings-as-errors` exit 0、`make test` 69 tests / 13 suites。
+
+### H3 実機検証（2026-08-06、合格）
+
+`make release VERSION=0.1.0-rc0` が生成した ZIP を `ditto -x` で展開した**実際の配布物**を対象に実施。開発用ビルドではない。
+
+事前に `tccutil reset ScreenCapture / Microphone dev.toshi0607.casrec` で旧署名のレコードを掃除し、システム設定から画面収録を再許可（ユーザー操作）。マイクは録画開始時に許可済み。
+
+| 検証項目 | 結果 |
+|---|---|
+| 配布物の署名 | `codesign --verify --deep --strict` 通過、`Authority=CasRec Release` |
+| Hardened Runtime | `flags=0x10000(runtime)` |
+| タイムスタンプ | `Aug 6, 2026 at 20:29:37` |
+| 埋め込み entitlements | `com.apple.security.device.audio-input => true` |
+| 起動・UI | 正常。ソース一覧・サムネイル表示・トグル操作すべて動作 |
+| 録画 | 画面全体 38.2 秒、drop 0、finalize 成功（サイドカー残骸なし） |
+| トラック構成 | HEVC 1 + AAC 2（アプリ音声・マイク） |
+| 映像 | 2940×1912（1470×956 の Retina 2x）、bt709、1112 フレーム、全フレーム走査でデコードエラーなし、先頭・末尾ともシーク可 |
+| 映像の内容 | 末尾フレームを目視。デスクトップ全体がウィジェット含め正しく記録され、色も自然 |
+| **マイク音声** | **stream 1: 3,317,632 samples / mean -35.7 dB / max -9.3 dB** |
+| アプリ音声 | stream 0: 3,659,648 samples / mean -26.6 dB / max -3.7 dB |
+
+**Hardened Runtime 下でマイク entitlement が効いていることの実証**: マイクトラックに 331 万サンプル・非無音の実信号が記録された。entitlement が欠けていればサンプル 0 件になる。アプリ音声より約 9 dB 低く、長さも 3.5 秒短い（マイク初期化の分）という、音響経由で拾った実マイク入力に固有の特徴も一致している。
+
+これで公開前の必須ゲートはすべて通過した。
+
+### Notes 追記
+
+- H3 実施中、私の画面操作ツール（computer-use）のスクリーンショット・フィルタリングが**コンポジタ側で他アプリのウィンドウを隠すため、CasRec の `SCShareableContent` からもそれらが見えなくなり**、ウィンドウ一覧が「録画できるウィンドウがありません」になる現象が起きた。CasRec の不具合ではなく検証環境の副作用。「画面全体」に切り替えることで回避した。次回同じ検証をするときはウィンドウ指定を避けるか、対象アプリを許可リストに入れる。

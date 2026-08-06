@@ -22,6 +22,34 @@ microphone audio. Recordings are stored locally on the user's Mac.
 - Microphone permission when microphone capture is enabled
 - `ffmpeg` is optional and used only for GIF conversion and remux recovery
 
+## Install
+
+Download `CasRec-<version>.zip` and `checksums.txt` from
+[Releases](../../releases). Replace `<version>` with the version shown on the
+release, then extract the ZIP archive and move `CasRec.app` to `/Applications`.
+
+Before installing, verify the downloaded archive against `checksums.txt`:
+
+```sh
+shasum -a 256 CasRec-<version>.zip
+shasum -a 256 -c checksums.txt
+```
+
+Compare the first command's output with the line for `CasRec-<version>.zip` in
+the downloaded `checksums.txt` file. The second command should report
+`CasRec-<version>.zip: OK`.
+
+The first launch is expected to be blocked by Gatekeeper. CasRec is signed with
+a developer's self-signed certificate; it is not signed with an Apple Developer
+ID certificate and has not received Apple notarization. On macOS 15 or later,
+first attempt to open the app, then go to System Settings > Privacy & Security
+and select **Open Anyway**. The right-click > Open flow is not available on
+macOS 15 or later. As an alternative, run the following command in Terminal:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/CasRec.app
+```
+
 ## Build and run
 
 The repository is a Swift Package with a Makefile. Run these commands from the
@@ -35,9 +63,9 @@ make run
 ```
 
 `make bundle` creates and signs `CasRec.app`. `make run` first runs that bundle
-step and then opens the app. The default signing identity, `CasRec Dev`, is a
-local development certificate and will not exist on another Mac. Without a
-certificate, use ad-hoc signing:
+step and then opens the app. The default signing identity, `CasRec Release`, is
+the maintainer's local self-signed certificate and will not exist on another
+Mac. Without a certificate, use ad-hoc signing:
 
 ```sh
 make bundle CODESIGN_IDENTITY=-
@@ -116,6 +144,25 @@ CasRecは、SwiftUI、ScreenCaptureKit、AVFoundationで作られたmacOS向け�
 - マイク録音を有効にする場合はマイクの許可
 - `ffmpeg` は任意で、GIF変換とremuxによる復旧にのみ使用
 
+### インストール
+
+[Releases](../../releases) から `CasRec-<version>.zip` と `checksums.txt` をダウンロードします。`<version>` はリリースに表示されているバージョンへ置き換えてください。ZIPアーカイブを展開し、`CasRec.app` を `/Applications` へ移動します。
+
+インストール前に、ダウンロードしたアーカイブを `checksums.txt` と照合します。
+
+```sh
+shasum -a 256 CasRec-<version>.zip
+shasum -a 256 -c checksums.txt
+```
+
+1つ目のコマンドの出力を、ダウンロードした `checksums.txt` にある `CasRec-<version>.zip` の行と比較してください。2つ目のコマンドでは `CasRec-<version>.zip: OK` と表示されることを確認します。
+
+初回起動時はGatekeeperによってブロックされることが想定されます。CasRecは開発者の自己署名証明書で署名されており、Apple Developer IDによる署名およびAppleの公証（notarization）を受けていません。macOS 15以降では、まずアプリの起動を試し、その後にシステム設定 → プライバシーとセキュリティ → 「このまま開く」を選択してください。macOS 15以降では「右クリック → 開く」は使えません。代替として、ターミナルで次を実行できます。
+
+```sh
+xattr -dr com.apple.quarantine /Applications/CasRec.app
+```
+
 ### ビルドと起動
 
 リポジトリのルートで以下を実行します。
@@ -127,7 +174,7 @@ make bundle
 make run
 ```
 
-`make bundle` は `CasRec.app` を作成して署名します。`make run` はバンドル作成後にアプリを開きます。既定の署名IDである `CasRec Dev` はローカル開発用の証明書であり、他のMacには存在しません。証明書がない場合は、ad-hoc署名で実行できます。
+`make bundle` は `CasRec.app` を作成して署名します。`make run` はバンドル作成後にアプリを開きます。既定の署名IDである `CasRec Release` はメンテナのローカル自己署名証明書であり、他のMacには存在しません。証明書がない場合は、ad-hoc署名で実行できます。
 
 ```sh
 make bundle CODESIGN_IDENTITY=-

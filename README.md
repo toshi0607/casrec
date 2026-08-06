@@ -5,6 +5,13 @@ SwiftUI, ScreenCaptureKit, and AVFoundation. It records a display, an
 individual window, or a selected region with application audio and, optionally,
 microphone audio. Recordings are stored locally on the user's Mac.
 
+![The recording tab, showing the capture target, audio toggles, and quality settings above the transport deck](docs/screenshots/recording-tab.png)
+
+![The same window while recording, with the transport deck showing elapsed time, file size, and dropped frames](docs/screenshots/recording-in-progress.png)
+
+The capture-target thumbnail is blurred in these screenshots because it shows
+the author's own desktop.
+
 ## Features
 
 - Record a display, an individual window, or a selected region in a window
@@ -136,6 +143,12 @@ CasRec is available under the [MIT License](LICENSE).
 ## 日本語
 
 CasRecは、SwiftUI、ScreenCaptureKit、AVFoundationで作られたmacOS向けの汎用的な画面収録アプリです。ディスプレイ、個別のウィンドウ、またはウィンドウ内で選択した範囲を、アプリ音声と必要に応じてマイク音声とともに録画し、録画データはMac内に保存します。
+
+![録画タブ。対象、音声トグル、画質設定と、下部のトランスポートデッキ](docs/screenshots/recording-tab.png)
+
+![録画中の同じ画面。デッキに経過時間、ファイルサイズ、ドロップ数が表示される](docs/screenshots/recording-in-progress.png)
+
+スクリーンショットの対象サムネイルは、作者自身のデスクトップが写るためぼかしています。
 
 ### 主な機能
 

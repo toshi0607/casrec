@@ -358,3 +358,38 @@ Phase 2への持ち越し(opus実測による発見): audio input が有効な�
 ### Notes 追記
 
 - H3 実施中、私の画面操作ツール（computer-use）のスクリーンショット・フィルタリングが**コンポジタ側で他アプリのウィンドウを隠すため、CasRec の `SCShareableContent` からもそれらが見えなくなり**、ウィンドウ一覧が「録画できるウィンドウがありません」になる現象が起きた。CasRec の不具合ではなく検証環境の副作用。「画面全体」に切り替えることで回避した。次回同じ検証をするときはウィンドウ指定を避けるか、対象アプリを許可リストに入れる。
+
+## Phase B — Homebrew Cask（2026-08-06、完了）
+
+ユーザー指示: 「Codex使ってphase Bやってください」。仕様は [oss-distribution-spec.md](oss-distribution-spec.md) §7、実装は Codex(Terra high) へ委譲、オーケストレーションとレビューは当方。
+
+### 事実の訂正
+
+Phase A の説明で「cask なら `brew install --cask --no-quarantine` で Gatekeeper の手順が消える」と述べたが、**誤りだった**。`--no-quarantine` は Homebrew で非推奨化のうえ削除済み（`brew --repository` の git log に `ffe954753b` / `ba25213c81`）。現行 6.0.14 の help にも存在しない。cask 経由でも quarantine 属性は付き、初回の Gatekeeper 手順は消えない（実測: `xattr -p com.apple.quarantine /Applications/CasRec.app` → `0381;6a7478aa;;DD3C243F-...`）。
+
+代わりに、調査の過程で**より価値のある性質**が確定した。`brew upgrade --cask` は `quarantine_release_decision` が `:release` を返すとき Gatekeeper 承認を引き継ぐ。その条件は「利用者が旧版を承認済み」かつ「署名 identity が不変」。CasRec は `CasRec Release` 証明書で identity を固定してあるため条件を満たす。**Phase A の安定 DR の決定がここで直接効く。**
+
+### 成果物
+
+- tap リポジトリ `toshi0607/homebrew-tap`（public、新規作成）に `Casks/casrec.rb` と README
+- `scripts/update-cask.sh` — `dist/checksums.txt` から SHA256 を読み、cask の version と sha256 の2行だけを書き換える
+- RELEASING.md §7、README 英日のインストール節
+
+### 検証証跡（オーケストレーター実測）
+
+| 項目 | 結果 |
+|---|---|
+| クリーン状態からの一行インストール | `brew install --cask toshi0607/tap/casrec` 成功（untap + trust.json 無しの状態から） |
+| Tap Trust | CasRec には trust 手順が不要。警告は利用者の既存の他 tap に対するもの |
+| チェックサム自動照合 | `✔︎ Cask casrec (0.1.0)` |
+| インストール後の署名 | `codesign --verify --deep --strict` 通過、`Authority=CasRec Release`、`flags=0x10000(runtime)`、Timestamp 保持 |
+| quarantine 属性 | **付く**（Gatekeeper は適用される。上記の訂正を実物で確認） |
+| `depends_on macos: ">= :sequoia"` | 非推奨警告が出たため `:sequoia` へ修正。`brew info` の Requirements は `macOS >= 15` のまま |
+| update-cask.sh 異常系 | 引数なし → usage、`dist/` 不在 → `make release` を促すエラー |
+| update-cask.sh 正常系 | `make release VERSION=0.2.0` の SHA を正しく反映、変更は2行のみ、差分表示と audit 案内あり（検証後 tap は 0.1.0 へ復帰） |
+| 品質ゲート | `swift build -Xswiftc -warnings-as-errors` exit 0、`make test` 69 tests / 13 suites |
+
+### Notes
+
+- 仕様に書いた `depends_on macos: ">= :sequoia"` は非推奨形式だった（当方のミス）。Codex は仕様どおり書いたので責はない。実測で検出し修正した。
+- Codex(Terra high) は C4 / C5 とも完走し、今回は他者の未コミット変更の巻き戻しも起きなかった（委譲プロンプトに禁止を明記した効果と思われる）。

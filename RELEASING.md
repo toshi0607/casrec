@@ -90,6 +90,38 @@ GitHub release with the two generated artifacts:
 gh release create "v<version>" "dist/CasRec-<version>.zip" "dist/checksums.txt" --title "CasRec <version>" --notes-file "release-notes-<version>.md"
 ```
 
+## 7. Update the Homebrew cask
+
+After publishing the GitHub release, update the cask using the checksum created
+by `make release`:
+
+```sh
+scripts/update-cask.sh <version>
+```
+
+The script expects the tap checkout at `../homebrew-tap`. If it is elsewhere,
+set `CASREC_TAP` to that checkout's path before running the script. Review the
+displayed diff, then audit the cask:
+
+```sh
+brew audit --cask --online toshi0607/tap/casrec
+```
+
+In the tap repository, commit and push the updated cask:
+
+```sh
+cd ../homebrew-tap
+git add Casks/casrec.rb
+git commit -m "casrec <version>"
+git push
+```
+
+Finally, verify installation from the tap:
+
+```sh
+brew install --cask toshi0607/tap/casrec
+```
+
 ## Release-notes template
 
 Copy this template into `release-notes-<version>.md` before running

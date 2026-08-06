@@ -99,22 +99,34 @@ by `make release`:
 scripts/update-cask.sh <version>
 ```
 
-The script expects the tap checkout at `../homebrew-tap`. If it is elsewhere,
-set `CASREC_TAP` to that checkout's path before running the script. Review the
-displayed diff, then audit the cask:
+By default the script edits the tap checkout Homebrew itself uses, under
+`$(brew --repository)/Library/Taps/toshi0607/homebrew-tap`. That matters:
+`brew audit` accepts only a cask token, never a path, and the token always
+resolves to that checkout. Editing a different clone would leave the audit
+reading the previous release and passing on stale content.
+
+Review the displayed diff, then audit the cask:
 
 ```sh
 brew audit --cask --online toshi0607/tap/casrec
 ```
 
-In the tap repository, commit and push the updated cask:
+The audit downloads the release archive and checks it against the `sha256` in
+the cask, so it fails if the tag or the checksum is wrong.
+
+That checkout is an ordinary git clone with a push remote, so commit and push
+from it:
 
 ```sh
-cd ../homebrew-tap
+cd "$(brew --repository)/Library/Taps/toshi0607/homebrew-tap"
 git add Casks/casrec.rb
 git commit -m "casrec <version>"
 git push
 ```
+
+`CASREC_TAP` overrides the target when you keep a separate clone. In that case
+the script warns that auditing by token would read Homebrew's copy instead;
+push first, then run `brew update` before auditing.
 
 Finally, verify installation from the tap:
 

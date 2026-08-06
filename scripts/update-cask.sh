@@ -20,7 +20,23 @@ version="$1"
 dist_dir="dist"
 checksums_file="$dist_dir/checksums.txt"
 archive="CasRec-$version.zip"
-tap_dir="${CASREC_TAP:-../homebrew-tap}"
+
+# `brew audit` only accepts a cask token, never a path, and a token always
+# resolves to Homebrew's own tap checkout. Editing any other clone would leave
+# the audit reading the previous release. Default to the checkout Homebrew
+# itself uses so the two cannot drift; it is a normal git clone with a remote,
+# so the commit and push happen there too.
+homebrew_tap_dir=""
+if brew_repo="$(brew --repository 2>/dev/null)"; then
+  homebrew_tap_dir="$brew_repo/Library/Taps/toshi0607/homebrew-tap"
+fi
+if [[ -n "${CASREC_TAP:-}" ]]; then
+  tap_dir="$CASREC_TAP"
+elif [[ -n "$homebrew_tap_dir" && -d "$homebrew_tap_dir" ]]; then
+  tap_dir="$homebrew_tap_dir"
+else
+  tap_dir="../homebrew-tap"
+fi
 
 if [[ ! -d "$dist_dir" ]]; then
   die "dist/ does not exist. Run 'make release VERSION=$version' first."
@@ -73,5 +89,21 @@ CASREC_CASK_VERSION="$version" CASREC_CASK_SHA256="$sha256" perl -pi -e '
 
 diff -u "$original_file" "$cask_file" || true
 
-printf '\nRun the following command to audit the cask:\n' >&2
-printf '  brew audit --cask --online toshi0607/tap/casrec\n' >&2
+audits_edited_file=false
+if [[ -n "$homebrew_tap_dir" && -d "$homebrew_tap_dir" ]] &&
+   [[ "$(cd "$tap_dir" && pwd -P)" == "$(cd "$homebrew_tap_dir" && pwd -P)" ]]; then
+  audits_edited_file=true
+fi
+
+if [[ "$audits_edited_file" == true ]]; then
+  printf '\nUpdated %s\nRun the following command to audit it:\n' "$cask_file" >&2
+  printf '  brew audit --cask --online toshi0607/tap/casrec\n' >&2
+else
+  printf '\nUpdated %s\n' "$cask_file" >&2
+  printf 'WARNING: this is not the checkout Homebrew reads.\n' >&2
+  printf '  brew audit only accepts a cask token, and that token resolves to\n' >&2
+  printf '  %s\n' "${homebrew_tap_dir:-the tap checkout under brew --repository}" >&2
+  printf '  Auditing now would check the previous release, not this change.\n' >&2
+  printf '  Commit and push this file, then run:\n' >&2
+  printf '    brew update && brew audit --cask --online toshi0607/tap/casrec\n' >&2
+fi

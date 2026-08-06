@@ -393,3 +393,15 @@ Phase A の説明で「cask なら `brew install --cask --no-quarantine` で Gat
 
 - 仕様に書いた `depends_on macos: ">= :sequoia"` は非推奨形式だった（当方のミス）。Codex は仕様どおり書いたので責はない。実測で検出し修正した。
 - Codex(Terra high) は C4 / C5 とも完走し、今回は他者の未コミット変更の巻き戻しも起きなかった（委譲プロンプトに禁止を明記した効果と思われる）。
+
+### Phase B レビュー対応（2026-08-06）
+
+指摘1件（P1）。**問題は実在したが、提示された修正案は現行 Homebrew では成立しなかった**ため、別の方法で直した。
+
+- **指摘**: `update-cask.sh` は `../homebrew-tap` を書き換えるのに、案内する audit コマンドは固定トークン `toshi0607/tap/casrec` であり、Homebrew 管理下の**更新前の cask** を audit して成功しうる。
+- **再現**: 別クローンだけを version 0.2.0 / sha256 全ゼロに書き換えた状態で `brew audit --cask toshi0607/tap/casrec` が exit 0。指摘のとおり。
+- **修正案が使えない理由**: `brew audit --cask <path>` は `Error: Calling 'brew audit [path ...]' is disabled! Use 'brew audit [name ...]' instead.` で拒否される。パス指定は無効化済み。
+- **採用した修正**: 編集先の既定を Homebrew 管理下のチェックアウト（`$(brew --repository)/Library/Taps/toshi0607/homebrew-tap`）にして、audit 対象と編集対象を構造的に一致させた。ここは push remote 付きの通常の git クローンなので commit・push 元にもなる。`CASREC_TAP` で別クローンを指定した場合は「トークン audit は別のファイルを読む」と警告し、push → `brew update` → audit の順を案内する。
+- **修正後の実測**: 既定パスで更新後の `brew audit --cask --online toshi0607/tap/casrec` が、存在しない v0.2.0 の URL に対し `curl: (56) ... 404` / `Error: 3 problems in 1 cask detected.` を返した。audit が編集後の内容を読んでいる。`CASREC_TAP` 指定時は警告分岐が出ることも確認。
+- 途中、警告文に入れたアポストロフィで `bash -n` が構文エラーになった（当方のミス）。文言を変更して解消。
+- 検証で触れた両チェックアウトは 0.1.0 へ復帰済み。品質ゲート: `swift build -Xswiftc -warnings-as-errors` exit 0、`make test` 69 tests / 13 suites。

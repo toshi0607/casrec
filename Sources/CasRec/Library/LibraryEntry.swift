@@ -39,19 +39,42 @@ struct LibraryEntry: Identifiable, Equatable {
 struct LibraryScanner {
     private static let supportedExtensions: Set<String> = ["mov", "mp4", "gif"]
 
-    let fileManager: FileManager
+    typealias DurationLoader = @Sendable (URL) async -> TimeInterval?
 
-    init(fileManager: FileManager = .default) {
+    struct Limits: Sendable {
+        let maximumConcurrentMetadataLoads: Int
+        let maximumGIFFrames: Int
+
+        init(maximumConcurrentMetadataLoads: Int = 4, maximumGIFFrames: Int = 10_000) {
+            self.maximumConcurrentMetadataLoads = max(1, maximumConcurrentMetadataLoads)
+            self.maximumGIFFrames = max(0, maximumGIFFrames)
+        }
+    }
+
+    let fileManager: FileManager
+    let limits: Limits
+    let durationLoader: DurationLoader
+
+    init(
+        fileManager: FileManager = .default,
+        limits: Limits = .init(),
+        durationLoader: DurationLoader? = nil
+    ) {
         self.fileManager = fileManager
+        self.limits = limits
+        self.durationLoader = durationLoader ?? { url in
+            await Self.duration(of: url, maximumGIFFrames: limits.maximumGIFFrames)
+        }
     }
 
     func scan(directory: URL) async -> [LibraryEntry] {
         let keys: Set<URLResourceKey> = [
+            .isDirectoryKey,
             .isRegularFileKey,
             .contentModificationDateKey,
             .fileSizeKey,
         ]
-        guard let urls = try? fileManager.contentsOfDirectory(
+        guard let enumerator = fileManager.enumerator(
             at: directory,
             includingPropertiesForKeys: Array(keys),
             options: [.skipsHiddenFiles]
@@ -59,38 +82,60 @@ struct LibraryScanner {
             return []
         }
 
-        let candidates = urls.compactMap { url -> (URL, Date, Int64, Bool)? in
-            guard Self.supportedExtensions.contains(url.pathExtension.lowercased()),
-                  let values = try? url.resourceValues(forKeys: keys),
-                  values.isRegularFile == true else {
-                return nil
-            }
-            let date = values.contentModificationDate ?? .distantPast
-            let size = Int64(values.fileSize ?? 0)
-            let sidecar = url.appendingPathExtension(RecordingArtifacts.sidecarExtension)
-            return (url, date, size, fileManager.fileExists(atPath: sidecar.path(percentEncoded: false)))
-        }
-        let sorted = candidates.sorted { lhs, rhs in
-            if lhs.1 != rhs.1 { return lhs.1 > rhs.1 }
-            return lhs.0.lastPathComponent.localizedStandardCompare(rhs.0.lastPathComponent) == .orderedAscending
-        }
+        let maximumConcurrentLoads = limits.maximumConcurrentMetadataLoads
+        let durationLoader = durationLoader
+        return await withTaskGroup(of: LibraryEntry?.self, returning: [LibraryEntry].self) { group in
+            var entries: [LibraryEntry] = []
+            var inFlightLoads = 0
 
-        return await withTaskGroup(of: LibraryEntry.self, returning: [LibraryEntry].self) { group in
-            for candidate in sorted {
+            while let url = enumerator.nextObject() as? URL {
+                if Task.isCancelled {
+                    group.cancelAll()
+                    break
+                }
+                guard let values = try? url.resourceValues(forKeys: keys) else { continue }
+                if values.isDirectory == true {
+                    enumerator.skipDescendants()
+                    continue
+                }
+                guard Self.supportedExtensions.contains(url.pathExtension.lowercased()),
+                      values.isRegularFile == true else {
+                    continue
+                }
+                if inFlightLoads == maximumConcurrentLoads, let entry = await group.next() {
+                    inFlightLoads -= 1
+                    if let entry {
+                        entries.append(entry)
+                    }
+                }
+
+                let date = values.contentModificationDate ?? .distantPast
+                let size = Int64(values.fileSize ?? 0)
+                let sidecar = url.appendingPathExtension(RecordingArtifacts.sidecarExtension)
+                let isUnfinalized = fileManager.fileExists(atPath: sidecar.path(percentEncoded: false))
                 group.addTask {
-                    LibraryEntry(
-                        url: candidate.0,
-                        createdAt: candidate.1,
-                        duration: await Self.duration(of: candidate.0),
-                        fileSize: candidate.2,
-                        isUnfinalized: candidate.3
+                    guard !Task.isCancelled else { return nil }
+                    return LibraryEntry(
+                        url: url,
+                        createdAt: date,
+                        duration: await durationLoader(url),
+                        fileSize: size,
+                        isUnfinalized: isUnfinalized
                     )
                 }
+                inFlightLoads += 1
             }
-            var entries: [LibraryEntry] = []
-            for await entry in group {
-                entries.append(entry)
+
+            if Task.isCancelled {
+                group.cancelAll()
             }
+            while inFlightLoads > 0, let entry = await group.next() {
+                inFlightLoads -= 1
+                if let entry, !Task.isCancelled {
+                    entries.append(entry)
+                }
+            }
+            guard !Task.isCancelled else { return [] }
             return entries.sorted { lhs, rhs in
                 if lhs.createdAt != rhs.createdAt { return lhs.createdAt > rhs.createdAt }
                 return lhs.fileName.localizedStandardCompare(rhs.fileName) == .orderedAscending
@@ -98,18 +143,20 @@ struct LibraryScanner {
         }
     }
 
-    private static func duration(of url: URL) async -> TimeInterval? {
+    private static func duration(of url: URL, maximumGIFFrames: Int) async -> TimeInterval? {
         if url.pathExtension.lowercased() == "gif" {
-            return gifDuration(of: url)
+            return gifDuration(of: url, maximumGIFFrames: maximumGIFFrames)
         }
         let asset = AVURLAsset(url: url)
         guard let duration = try? await asset.load(.duration), duration.isNumeric else { return nil }
         return duration.seconds
     }
 
-    private static func gifDuration(of url: URL) -> TimeInterval? {
+    private static func gifDuration(of url: URL, maximumGIFFrames: Int) -> TimeInterval? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-        let duration = (0..<CGImageSourceGetCount(source)).reduce(0.0) { total, index in
+        let frameCount = CGImageSourceGetCount(source)
+        guard frameCount <= maximumGIFFrames else { return nil }
+        let duration = (0..<frameCount).reduce(0.0) { total, index in
             guard let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any],
                   let gif = properties[kCGImagePropertyGIFDictionary] as? [CFString: Any] else {
                 return total

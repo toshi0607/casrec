@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import Testing
 @testable import CasRec
 
@@ -42,6 +43,33 @@ struct PostProcessQueueTests {
             "end:second.mov",
         ])
     }
+
+    @Test("shutdown waits for an active ffmpeg child and rejects further work")
+    func shutdownCancelsActiveProcess() async throws {
+        let pidFile = URL(filePath: NSTemporaryDirectory()).appending(path: "casrec-queue-pid-\(UUID().uuidString)", directoryHint: .notDirectory)
+        defer { try? FileManager.default.removeItem(at: pidFile) }
+        let runner = FfmpegRunner(
+            executableURL: URL(filePath: "/bin/sh"),
+            policy: .init(timeout: .seconds(2), terminationGracePeriod: .milliseconds(100), stderrTailLimit: 256)
+        )
+        let queue = PostProcessQueue { job, _ in
+            try await runner.run(arguments: ["-c", "echo $$ > '\(pidFile.path)'; trap '' TERM; while :; do :; done"])
+            return job.outputURL
+        }
+        let active = PostProcessJob(
+            sourceURL: URL(filePath: "/tmp/active.mov"),
+            outputURL: URL(filePath: "/tmp/active.gif"),
+            operation: .gif
+        )
+
+        #expect(await queue.enqueue(active))
+        let processID = try await waitForProcessID(at: pidFile)
+        await queue.cancelAllAndWait()
+
+        #expect(Darwin.kill(processID, 0) == -1)
+        #expect(errno == ESRCH)
+        #expect(!(await queue.enqueue(active)))
+    }
 }
 
 private actor JobRecorder {
@@ -66,4 +94,15 @@ private func waitForQueueToSettle(_ queue: PostProcessQueue) async -> Bool {
         try? await Task.sleep(for: .milliseconds(10))
     }
     return false
+}
+
+private func waitForProcessID(at url: URL) async throws -> Int32 {
+    for _ in 0..<100 {
+        if let contents = try? String(contentsOf: url, encoding: .utf8),
+           let processID = Int32(contents.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            return processID
+        }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    throw CocoaError(.fileNoSuchFile)
 }

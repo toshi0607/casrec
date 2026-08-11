@@ -17,6 +17,8 @@ jobs:
         run: swift --version
       - name: Build without warnings
         run: swift build -Xswiftc -warnings-as-errors
+      - name: Bundle and verify Hardened Runtime
+        run: make bundle CODESIGN_IDENTITY=-
       - name: Run tests
         run: |
           set -o pipefail

@@ -31,7 +31,7 @@ EXPECTED_LEAF := 4feed5cfc27c13bd9711823f1edd9a4ee2a96b44
 VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
 BUILD_NUMBER ?= $(shell git rev-list --count HEAD)
 
-.PHONY: build test bundle run clean release
+.PHONY: build test bundle verify-bundle run clean release
 
 build:
 	swift build
@@ -57,6 +57,14 @@ bundle:
 	codesign --force --options runtime --timestamp \
 		--entitlements "$(ENTITLEMENTS)" \
 		-s "$(CODESIGN_IDENTITY)" "$(APP_BUNDLE)"
+	$(MAKE) verify-bundle
+
+verify-bundle:
+	codesign --verify --deep --strict --verbose=2 "$(APP_BUNDLE)"
+	@if ! codesign -dvvv "$(APP_BUNDLE)" 2>&1 | grep -Eq 'CodeDirectory .*flags=.*runtime'; then \
+		echo "Hardened Runtime is missing; sign the bundle with --options runtime."; \
+		exit 1; \
+	fi
 
 run: bundle
 	open "$(APP_BUNDLE)"

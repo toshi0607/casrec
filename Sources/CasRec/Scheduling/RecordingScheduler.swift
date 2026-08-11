@@ -276,19 +276,13 @@ actor RecordingScheduler {
     }
 }
 
-/// Resolves a snapshot source against a newly enumerated source list.  Window IDs can
-/// change between reservation and firing, hence the progressively weaker fallbacks.
+/// Resolves a snapshot source against a newly enumerated source list. Delayed starts must
+/// never select a merely similar window: only one exact, owner-bound identity is valid.
 enum CaptureSourceResolver {
     static func resolve(saved source: CaptureSource, in currentSources: [CaptureSource]) -> CaptureSource? {
-        if let exactMatch = currentSources.first(where: { $0.id == source.id }) {
-            return exactMatch
-        }
-        guard source.kind == .window, let appName = source.appName else { return nil }
-        if let titleMatch = currentSources.first(where: {
-            $0.kind == .window && $0.appName == appName && $0.title == source.title
-        }) {
-            return titleMatch
-        }
-        return currentSources.first(where: { $0.kind == .window && $0.appName == appName })
+        guard let identity = source.identity else { return nil }
+        let matches = currentSources.filter { $0.identity == identity }
+        guard matches.count == 1 else { return nil }
+        return matches[0]
     }
 }

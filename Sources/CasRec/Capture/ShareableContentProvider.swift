@@ -76,20 +76,21 @@ enum ShareableContentProvider {
         let appName = window.owningApplication?.applicationName
         let title = (window.title?.isEmpty == false ? window.title : nil) ?? appName ?? "Untitled Window"
         return CaptureSource(
-            id: "window-\(window.windowID)",
+            identity: windowIdentity(for: window),
             kind: .window,
             title: title,
             appName: appName,
             frame: window.frame,
             scWindow: window,
             scDisplay: nil,
-            thumbnail: nil
+            thumbnail: nil,
+            unresolvedID: "unresolved-window-\(window.windowID)"
         )
     }
 
     private static func displaySource(for display: SCDisplay, displayNumber: Int) -> CaptureSource {
         CaptureSource(
-            id: "display-\(display.displayID)",
+            identity: .display(displayID: display.displayID),
             kind: .display,
             title: "Display \(displayNumber) (\(display.width)×\(display.height))",
             appName: nil,
@@ -97,6 +98,22 @@ enum ShareableContentProvider {
             scWindow: nil,
             scDisplay: display,
             thumbnail: nil
+        )
+    }
+
+    /// A delayed window capture may only be resolved when ScreenCaptureKit provides a
+    /// concrete owner. The raw window ID alone can be reused by a different process.
+    private static func windowIdentity(for window: SCWindow) -> CaptureSourceIdentity? {
+        guard let application = window.owningApplication,
+              !application.bundleIdentifier.isEmpty,
+              application.processID > 0
+        else {
+            return nil
+        }
+        return .window(
+            windowID: window.windowID,
+            owningProcessID: Int32(application.processID),
+            bundleIdentifier: application.bundleIdentifier
         )
     }
 
@@ -153,14 +170,15 @@ enum ShareableContentProvider {
 extension CaptureSource {
     fileprivate func withThumbnail(_ image: CGImage?) -> CaptureSource {
         CaptureSource(
-            id: id,
+            identity: identity,
             kind: kind,
             title: title,
             appName: appName,
             frame: frame,
             scWindow: scWindow,
             scDisplay: scDisplay,
-            thumbnail: image
+            thumbnail: image,
+            unresolvedID: unresolvedID
         )
     }
 }

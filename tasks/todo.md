@@ -405,3 +405,28 @@ Phase A の説明で「cask なら `brew install --cask --no-quarantine` で Gat
 - **修正後の実測**: 既定パスで更新後の `brew audit --cask --online toshi0607/tap/casrec` が、存在しない v0.2.0 の URL に対し `curl: (56) ... 404` / `Error: 3 problems in 1 cask detected.` を返した。audit が編集後の内容を読んでいる。`CASREC_TAP` 指定時は警告分岐が出ることも確認。
 - 途中、警告文に入れたアポストロフィで `bash -n` が構文エラーになった（当方のミス）。文言を変更して解消。
 - 検証で触れた両チェックアウトは 0.1.0 へ復帰済み。品質ゲート: `swift build -Xswiftc -warnings-as-errors` exit 0、`make test` 69 tests / 13 suites。
+
+## Codex Security 指摘修正（2026-08-09）
+
+- [x] 5件の検証済み指摘と最新 `main` の到達経路を再確認する。
+- [x] 利用案内・ライセンス・READMEが最新 `main` に含まれることを確認し、PRをセキュリティ修正だけに限定する。
+- [x] owner-bound対象再解決、ライブラリ解析上限、ffmpeg境界・監督、Hardened Runtime検証を移植する。
+- [x] 全テスト、警告厳格build、bundle、署名、変異検証を実行する。
+- [x] 独立レビューを完了し、production/test blocker がないことを確認する。
+- [x] コミット・pushし、ドラフトPR #34を作成する。
+
+詳細: [security-fixes/task_plan.md](security-fixes/task_plan.md)
+
+## PR #34 レビュー指摘対応（2026-08-11）
+
+- [x] 指摘1〜4を現行コードと既存不変条件に照らして再検証する。
+- [x] 妥当な指摘へ、脆弱な挙動を再現する回帰テストと最小修正を追加する。
+- [x] focused test、`make test`、warnings-as-errors buildを通す（91 tests / 16 suites）。
+- [x] 独立レビューで不変条件・回帰・差分範囲を確認する。
+- [x] 判断と検証証跡を記録し、PR #34へpushする（`7382099`）。
+
+### Decision log
+
+- PR上のreview threadは0件。今回の対応単位は、ユーザーが提示した4件のレビュー票とする。
+- 4件とも妥当。圧縮は共通の一時出力公開境界へ揃え、stderr/GIF timeoutは診断保持、未解決source IDはUI識別子だけを一意化する。owner-bound identityは変更しない。
+- 独立レビューのproduction blockerは0件。GIF timeoutテストがmessage constructorしか通らない指摘は妥当だったため、pass2残時間から総予算へのremap経路を直接検証する形へ修正した。

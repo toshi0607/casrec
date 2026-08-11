@@ -15,6 +15,7 @@ struct CasRecApp: App {
                 session: appDelegate.session,
                 captureService: appDelegate.captureService,
                 controls: appDelegate.controls,
+                postProcessQueue: appDelegate.postProcessQueue,
                 usageNotice: appDelegate.usageNotice
             )
         }
@@ -39,9 +40,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let session: RecordingSession
     let scheduler: RecordingScheduler
     let controls: RecordingControls
+    let postProcessQueue: PostProcessQueue
     let usageNotice: UsageNoticeController
 
     private var globalHotKey: GlobalHotKey?
+    private var terminationTask: Task<Void, Never>?
 
     override init() {
         let captureService = CaptureService()
@@ -53,6 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             captureService: captureService,
             scheduler: scheduler
         )
+        self.postProcessQueue = PostProcessQueue()
         self.usageNotice = UsageNoticeController()
         super.init()
     }
@@ -77,9 +81,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard terminationTask == nil else { return .terminateLater }
         switch controls.currentState {
         case .idle, .failed:
-            return .terminateNow
+            return beginTermination(stoppingRecording: false)
         case .preparing, .recording, .finishing:
             break
         }
@@ -93,8 +98,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return .terminateCancel
         }
 
-        Task {
-            await stopThenTerminate()
+        return beginTermination(stoppingRecording: true)
+    }
+
+    private func beginTermination(stoppingRecording: Bool) -> NSApplication.TerminateReply {
+        terminationTask = Task { [weak self] in
+            guard let self else { return }
+            if stoppingRecording {
+                await stopRecordingForTermination()
+            }
+            await postProcessQueue.cancelAllAndWait()
+            NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
     }
@@ -102,18 +116,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Quitting must not cut `finishWriting` short, so this follows the state machine to
     /// its end rather than assuming one `stop()` is enough — `stop()` is a no-op while the
     /// session is still `preparing`, and the file is only safe once it reaches `idle`.
-    private func stopThenTerminate() async {
+    private func stopRecordingForTermination() async {
         for await state in session.observeState() {
             switch state {
             case .recording:
                 await session.stop()
             case .idle, .failed:
-                NSApp.reply(toApplicationShouldTerminate: true)
                 return
             case .preparing, .finishing:
                 continue
             }
         }
-        NSApp.reply(toApplicationShouldTerminate: true)
     }
 }

@@ -62,7 +62,7 @@ struct FfmpegSupportTests {
         #expect(continuedCollision.lastPathComponent == "recording-compressed-3.mp4")
     }
 
-    @Test("GIF commands use palettegen then paletteuse at the selected defaults")
+    @Test("GIF commands force local MOV and PNG inputs before the fixed filters")
     func gifCommandsUseTwoPassPaletteWorkflow() {
         let input = URL(filePath: "/tmp/input.mov")
         let palette = URL(filePath: "/tmp/palette.png")
@@ -72,16 +72,16 @@ struct FfmpegSupportTests {
         let use = FfmpegCommandBuilder.paletteUse(input: input, palette: palette, output: output)
 
         #expect(generation == [
-            "-hide_banner", "-loglevel", "error", "-nostats",
-            "-i", "/tmp/input.mov",
+            "-hide_banner", "-loglevel", "error", "-nostats", "-nostdin",
+            "-protocol_whitelist", "file", "-f", "mov", "-enable_drefs", "0", "-use_absolute_path", "0", "-i", "/tmp/input.mov",
             "-vf", "fps=10,scale=640:-1:flags=lanczos,palettegen",
             "-frames:v", "1",
             "-n", "/tmp/palette.png",
         ])
         #expect(use == [
-            "-hide_banner", "-loglevel", "error", "-nostats",
-            "-i", "/tmp/input.mov",
-            "-i", "/tmp/palette.png",
+            "-hide_banner", "-loglevel", "error", "-nostats", "-nostdin",
+            "-protocol_whitelist", "file", "-f", "mov", "-enable_drefs", "0", "-use_absolute_path", "0", "-i", "/tmp/input.mov",
+            "-protocol_whitelist", "file", "-f", "image2", "-i", "/tmp/palette.png",
             "-lavfi", "fps=10,scale=640:-1:flags=lanczos[scaled];[scaled][1:v]paletteuse",
             "-n", "/tmp/output.gif",
         ])
@@ -95,8 +95,8 @@ struct FfmpegSupportTests {
         let command = FfmpegCommandBuilder.remux(input: input, output: output)
 
         #expect(command == [
-            "-hide_banner", "-loglevel", "error", "-nostats",
-            "-i", "/tmp/interrupted.mov",
+            "-hide_banner", "-loglevel", "error", "-nostats", "-nostdin",
+            "-protocol_whitelist", "file", "-f", "mov", "-enable_drefs", "0", "-use_absolute_path", "0", "-i", "/tmp/interrupted.mov",
             "-c", "copy",
             "-n", "/tmp/interrupted-recovered.mov",
         ])

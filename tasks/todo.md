@@ -423,7 +423,7 @@ Phase A の説明で「cask なら `brew install --cask --no-quarantine` で Gat
 - [x] 妥当な指摘へ、脆弱な挙動を再現する回帰テストと最小修正を追加する。
 - [x] focused test、`make test`、warnings-as-errors buildを通す（91 tests / 16 suites）。
 - [x] 独立レビューで不変条件・回帰・差分範囲を確認する。
-- [ ] 判断と検証証跡を記録し、PR #34へpushする。
+- [x] 判断と検証証跡を記録し、PR #34へpushする（`7382099`）。
 
 ### Decision log
 

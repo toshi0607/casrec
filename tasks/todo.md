@@ -413,6 +413,6 @@ Phase A の説明で「cask なら `brew install --cask --no-quarantine` で Gat
 - [x] owner-bound対象再解決、ライブラリ解析上限、ffmpeg境界・監督、Hardened Runtime検証を移植する。
 - [x] 全テスト、警告厳格build、bundle、署名、変異検証を実行する。
 - [x] 独立レビューを完了し、production/test blocker がないことを確認する。
-- [ ] コミット・pushし、ドラフトPRを作成する。
+- [x] コミット・pushし、ドラフトPR #34を作成する。
 
 詳細: [security-fixes/task_plan.md](security-fixes/task_plan.md)

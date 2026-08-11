@@ -4,6 +4,8 @@
 
 The five validated findings from scan `e820729f-3c44-4b3d-808f-678cbc7e85fc` are fixed on the latest `main` architecture. The already-merged usage notice, redesigned UI, Homebrew/release documentation, entitlements, timestamping, clean bundle reconstruction, and signing leaf verification are preserved.
 
+Draft pull request: https://github.com/toshi0607/casrec/pull/34
+
 ## Remediations
 
 1. Delayed window capture requires one exact `windowID` + owner PID + bundle ID match. Mutable title/application labels and ambiguous identities fail closed.

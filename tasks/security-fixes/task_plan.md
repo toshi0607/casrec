@@ -11,7 +11,7 @@ Close all five validated Codex Security findings on the latest `main`, preserve 
 - [x] Port the five security fixes and their regression tests onto the current architecture.
 - [x] Run tests, warnings-as-errors build, bundle/signature verification, and mutation checks.
 - [x] Perform independent review and document the final latest-main result.
-- [ ] Commit, push, and open a draft PR.
+- [x] Commit, push, and open draft PR #34.
 
 ## Finding Tracks
 
@@ -29,4 +29,4 @@ Close all five validated Codex Security findings on the latest `main`, preserve 
 
 ## Status
 
-**Ready to publish** — latest-main integration, repeated verification, and independent final review pass with no blocker.
+**Published for review** — latest-main integration, repeated verification, and independent final review pass with no blocker; draft PR #34 is open.

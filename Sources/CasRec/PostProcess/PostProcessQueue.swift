@@ -61,6 +61,8 @@ actor PostProcessQueue {
     private let execute: Executor
     private var waiting: [PostProcessJob] = []
     private var active: PostProcessJob?
+    private var activeTask: Task<Void, Never>?
+    private var isShuttingDown = false
     private var states: [String: PostProcessJobState] = [:]
     private var orderedIDs: [String] = []
     private var continuations: [UUID: AsyncStream<[PostProcessJobStatus]>.Continuation] = [:]
@@ -72,6 +74,7 @@ actor PostProcessQueue {
     /// Returns false if an equal source/kind is waiting or running already.
     @discardableResult
     func enqueue(_ job: PostProcessJob) -> Bool {
+        guard !isShuttingDown else { return false }
         if let existingState = states[job.id] {
             switch existingState {
             case .waiting, .running:
@@ -88,6 +91,24 @@ actor PostProcessQueue {
         publish()
         startNextIfNeeded()
         return true
+    }
+
+    /// Prevents new work, discards waiting work, and does not return until the active
+    /// executor has observed cancellation and finished its teardown.
+    func cancelAllAndWait() async {
+        isShuttingDown = true
+        let discardedIDs = Set(waiting.map(\.id))
+        waiting.removeAll()
+        for id in discardedIDs {
+            states[id] = nil
+            finishedJobs[id] = nil
+        }
+        orderedIDs.removeAll { discardedIDs.contains($0) }
+        publish()
+
+        let task = activeTask
+        task?.cancel()
+        await task?.value
     }
 
     func statuses() -> [PostProcessJobStatus] {
@@ -134,13 +155,13 @@ actor PostProcessQueue {
     }
 
     private func startNextIfNeeded() {
-        guard active == nil, !waiting.isEmpty else { return }
+        guard !isShuttingDown, active == nil, !waiting.isEmpty else { return }
         let job = waiting.removeFirst()
         active = job
         states[job.id] = .running(progress: nil)
         publish()
 
-        Task { [execute] in
+        let task = Task { [execute] in
             do {
                 let output = try await execute(job) { [weak self] progress in
                     Task { await self?.setProgress(progress, for: job.id) }
@@ -150,6 +171,7 @@ actor PostProcessQueue {
                 finish(job: job, state: .failed(message: Self.message(for: error)))
             }
         }
+        activeTask = task
     }
 
     private func setProgress(_ progress: Double?, for id: String) {
@@ -161,6 +183,7 @@ actor PostProcessQueue {
     private func finish(job: PostProcessJob, state: PostProcessJobState) {
         guard active?.id == job.id else { return }
         active = nil
+        activeTask = nil
         finishedJobs[job.id] = job
         states[job.id] = state
         publish()

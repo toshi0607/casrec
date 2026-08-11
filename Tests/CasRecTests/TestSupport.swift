@@ -191,7 +191,11 @@ final class WriterFailureSwitch: @unchecked Sendable {
 /// session only reads the name out of it, and the fake capture service never builds a filter.
 func makeTestSource(title: String = "Test Window", appName: String? = "TestApp") -> CaptureSource {
     CaptureSource(
-        id: "window-test",
+        identity: .window(
+            windowID: 1,
+            owningProcessID: 1,
+            bundleIdentifier: "com.example.CasRecTests"
+        ),
         kind: .window,
         title: title,
         appName: appName,

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Synchronization
 import Testing
@@ -251,32 +252,54 @@ struct RecordingSchedulerTests {
 
 @Suite("Capture source resolver")
 struct CaptureSourceResolverTests {
-    @Test("Uses the same ID first")
-    func matchesID() {
-        let saved = source(id: "window-10", title: "Live", appName: "Safari")
-        let current = source(id: "window-10", title: "Different", appName: "Other")
+    @Test("Resolves an exact window even when its title changes")
+    func resolvesExactWindowWithChangedTitle() {
+        let saved = windowSource(title: "Live")
+        let current = windowSource(title: "Different")
         #expect(CaptureSourceResolver.resolve(saved: saved, in: [current])?.id == current.id)
     }
 
-    @Test("Falls back to same app and title")
-    func matchesAppAndTitle() {
-        let saved = source(id: "window-old", title: "Live", appName: "Safari")
-        let current = source(id: "window-new", title: "Live", appName: "Safari")
+    @Test("Does not match a same-title window from a different process")
+    func doesNotMatchDifferentProcess() {
+        let saved = windowSource(owningProcessID: 100, title: "Live")
+        let current = windowSource(owningProcessID: 200, title: "Live")
+        #expect(CaptureSourceResolver.resolve(saved: saved, in: [current]) == nil)
+    }
+
+    @Test("Does not match a same-title window from a different bundle")
+    func doesNotMatchDifferentBundle() {
+        let saved = windowSource(bundleIdentifier: "com.apple.Safari", title: "Live")
+        let current = windowSource(bundleIdentifier: "com.example.SafariClone", title: "Live")
+        #expect(CaptureSourceResolver.resolve(saved: saved, in: [current]) == nil)
+    }
+
+    @Test("Does not match a different window with the same title and app")
+    func doesNotMatchDifferentWindowID() {
+        let saved = windowSource(windowID: 10, title: "Live")
+        let current = windowSource(windowID: 20, title: "Live")
+        #expect(CaptureSourceResolver.resolve(saved: saved, in: [current]) == nil)
+    }
+
+    @Test("Rejects duplicate exact identities")
+    func rejectsDuplicateExactIdentities() {
+        let saved = windowSource(title: "Live")
+        let duplicateOne = windowSource(title: "Live")
+        let duplicateTwo = windowSource(title: "Renamed")
+        #expect(CaptureSourceResolver.resolve(saved: saved, in: [duplicateOne, duplicateTwo]) == nil)
+    }
+
+    @Test("Resolves an exact display")
+    func resolvesExactDisplay() {
+        let saved = displaySource(displayID: 7, title: "Display 1")
+        let current = displaySource(displayID: 7, title: "Display 7")
         #expect(CaptureSourceResolver.resolve(saved: saved, in: [current])?.id == current.id)
     }
 
-    @Test("Falls back to the first window of the same app")
-    func matchesAppOnly() {
-        let saved = source(id: "window-old", title: "Live", appName: "Safari")
-        let current = source(id: "window-new", title: "Other tab", appName: "Safari")
-        #expect(CaptureSourceResolver.resolve(saved: saved, in: [current])?.id == current.id)
-    }
-
-    @Test("Returns nil when every matching source disappeared")
-    func returnsNilWhenSourceIsGone() {
-        let saved = source(id: "window-old", title: "Live", appName: "Safari")
-        let other = source(id: "window-other", title: "Live", appName: "Chrome")
-        #expect(CaptureSourceResolver.resolve(saved: saved, in: [other]) == nil)
+    @Test("Rejects delayed window starts without a trustworthy owner")
+    func rejectsWindowWithoutOwner() {
+        let saved = untrustedWindowSource(title: "Live", appName: "Safari")
+        let current = untrustedWindowSource(title: "Live", appName: "Safari")
+        #expect(CaptureSourceResolver.resolve(saved: saved, in: [current]) == nil)
     }
 }
 
@@ -289,15 +312,25 @@ private func testScheduler(_ clock: ManualSchedulingClock) -> RecordingScheduler
 private func reservation(at startAt: Date, maximumDuration: TimeInterval? = nil) -> ScheduledRecording {
     ScheduledRecording(
         startAt: startAt,
-        source: source(id: "window-1", title: "Live", appName: "Safari"),
+        source: windowSource(windowID: 1, title: "Live"),
         settings: .default,
         maximumDuration: maximumDuration
     )
 }
 
-private func source(id: String, title: String, appName: String) -> CaptureSource {
+private func windowSource(
+    windowID: CGWindowID = 10,
+    owningProcessID: Int32 = 100,
+    bundleIdentifier: String = "com.apple.Safari",
+    title: String,
+    appName: String = "Safari"
+) -> CaptureSource {
     CaptureSource(
-        id: id,
+        identity: .window(
+            windowID: windowID,
+            owningProcessID: owningProcessID,
+            bundleIdentifier: bundleIdentifier
+        ),
         kind: .window,
         title: title,
         appName: appName,
@@ -305,6 +338,33 @@ private func source(id: String, title: String, appName: String) -> CaptureSource
         scWindow: nil,
         scDisplay: nil,
         thumbnail: nil
+    )
+}
+
+private func displaySource(displayID: CGDirectDisplayID, title: String) -> CaptureSource {
+    CaptureSource(
+        identity: .display(displayID: displayID),
+        kind: .display,
+        title: title,
+        appName: nil,
+        frame: .zero,
+        scWindow: nil,
+        scDisplay: nil,
+        thumbnail: nil
+    )
+}
+
+private func untrustedWindowSource(title: String, appName: String) -> CaptureSource {
+    CaptureSource(
+        identity: nil,
+        kind: .window,
+        title: title,
+        appName: appName,
+        frame: .zero,
+        scWindow: nil,
+        scDisplay: nil,
+        thumbnail: nil,
+        unresolvedID: "unresolved-window-10"
     )
 }
 

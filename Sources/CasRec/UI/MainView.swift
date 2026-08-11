@@ -15,6 +15,7 @@ struct MainView: View {
     let session: any RecordingSessionControlling
     let captureService: any CaptureServicing
     @Bindable var controls: RecordingControls
+    let postProcessQueue: PostProcessQueue
     @Bindable var usageNotice: UsageNoticeController
 
     @State private var sources: [CaptureSource] = []
@@ -40,11 +41,13 @@ struct MainView: View {
         session: any RecordingSessionControlling,
         captureService: any CaptureServicing,
         controls: RecordingControls,
+        postProcessQueue: PostProcessQueue,
         usageNotice: UsageNoticeController
     ) {
         self.session = session
         self.captureService = captureService
         self.controls = controls
+        self.postProcessQueue = postProcessQueue
         self.usageNotice = usageNotice
         _selectedSourceId = State(initialValue: controls.selectedSourceID)
     }
@@ -106,7 +109,8 @@ struct MainView: View {
                     LibraryView(
                         directory: controls.settings.destinationDirectory,
                         refreshToken: libraryRefreshToken,
-                        allowsDeletion: !isRecording && !isTransitioning
+                        allowsDeletion: !isRecording && !isTransitioning,
+                        jobQueue: postProcessQueue
                     )
                     .navigationSubtitle("ライブラリ")
                 } else {

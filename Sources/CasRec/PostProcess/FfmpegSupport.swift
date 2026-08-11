@@ -75,9 +75,19 @@ enum FfmpegCommandBuilder {
     /// Keep long conversions from filling diagnostic pipes. `FfmpegRunner` still drains
     /// stderr while the child is alive so unexpected errors can be reported safely.
     static let quietArguments = ["-hide_banner", "-loglevel", "error", "-nostats"]
+    private static let localMOVInputArguments = [
+        "-protocol_whitelist", "file",
+        "-f", "mov",
+        "-enable_drefs", "0",
+        "-use_absolute_path", "0",
+    ]
+    private static let localPNGInputArguments = [
+        "-protocol_whitelist", "file",
+        "-f", "image2",
+    ]
 
     static func paletteGeneration(input: URL, palette: URL) -> [String] {
-        quietArguments + [
+        quietArguments + ["-nostdin"] + localMOVInputArguments + [
             "-i", input.path(percentEncoded: false),
             "-vf", "\(gifFilter),palettegen",
             "-frames:v", "1",
@@ -86,8 +96,9 @@ enum FfmpegCommandBuilder {
     }
 
     static func paletteUse(input: URL, palette: URL, output: URL) -> [String] {
-        quietArguments + [
+        quietArguments + ["-nostdin"] + localMOVInputArguments + [
             "-i", input.path(percentEncoded: false),
+        ] + localPNGInputArguments + [
             "-i", palette.path(percentEncoded: false),
             "-lavfi", "\(gifFilter)[scaled];[scaled][1:v]paletteuse",
             "-n", output.path(percentEncoded: false),
@@ -95,7 +106,7 @@ enum FfmpegCommandBuilder {
     }
 
     static func remux(input: URL, output: URL) -> [String] {
-        quietArguments + [
+        quietArguments + ["-nostdin"] + localMOVInputArguments + [
             "-i", input.path(percentEncoded: false),
             "-c", "copy",
             "-n", output.path(percentEncoded: false),

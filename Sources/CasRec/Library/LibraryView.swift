@@ -7,11 +7,11 @@ struct LibraryView: View {
     let directory: URL
     let refreshToken: Int
     let allowsDeletion: Bool
+    let jobQueue: PostProcessQueue
 
     @State private var entries: [LibraryEntry] = []
     @State private var entryToDelete: LibraryEntry?
     @State private var errorMessage: String?
-    @State private var jobQueue = PostProcessQueue()
     @State private var jobStatuses: [PostProcessJobStatus] = []
     @State private var handledTerminalJobIDs = Set<String>()
 

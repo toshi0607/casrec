@@ -80,6 +80,24 @@ enum CaptureSourceKind: Sendable, Equatable, CaseIterable {
     case window
 }
 
+/// A stable, owner-bound identifier for a capture source. Window titles and application
+/// display names are deliberately excluded: neither is a trustworthy capture identity.
+enum CaptureSourceIdentity: Hashable, Sendable {
+    case display(displayID: CGDirectDisplayID)
+    case window(windowID: CGWindowID, owningProcessID: Int32, bundleIdentifier: String)
+
+    /// A stable string for SwiftUI's `Identifiable` support. This is derived only from
+    /// the typed identity and must not be used to reconstruct one.
+    var stableID: String {
+        switch self {
+        case .display(let displayID):
+            "display-\(displayID)"
+        case .window(let windowID, let owningProcessID, let bundleIdentifier):
+            "window-\(windowID)-pid-\(owningProcessID)-bundle-\(bundleIdentifier)"
+        }
+    }
+}
+
 /// One entry in the source picker: a display or window available to capture, with the
 /// underlying ScreenCaptureKit object needed to build an `SCContentFilter` (§5.2).
 ///
@@ -89,7 +107,9 @@ enum CaptureSourceKind: Sendable, Equatable, CaseIterable {
 /// drawn. Without this the UI layer, which is `@MainActor`, cannot pass a picked source to
 /// the recording layer at all.
 struct CaptureSource: Identifiable, @unchecked Sendable {
-    let id: String
+    /// `nil` means this source was enumerated without enough owner information to safely
+    /// resolve it again later. It can still be used for an immediate manual capture.
+    let identity: CaptureSourceIdentity?
     let kind: CaptureSourceKind
     let title: String
     let appName: String?
@@ -97,6 +117,35 @@ struct CaptureSource: Identifiable, @unchecked Sendable {
     let scWindow: SCWindow?
     let scDisplay: SCDisplay?
     let thumbnail: CGImage?
+
+    /// Stable picker key for a source whose trusted identity is unavailable.
+    let unresolvedID: String
+
+    /// SwiftUI identity. Trusted sources use their typed identity; an unresolved source
+    /// keeps the stable enumeration key supplied by the capture provider.
+    var id: String { identity?.stableID ?? unresolvedID }
+
+    init(
+        identity: CaptureSourceIdentity?,
+        kind: CaptureSourceKind,
+        title: String,
+        appName: String?,
+        frame: CGRect,
+        scWindow: SCWindow?,
+        scDisplay: SCDisplay?,
+        thumbnail: CGImage?,
+        unresolvedID: String? = nil
+    ) {
+        self.identity = identity
+        self.kind = kind
+        self.title = title
+        self.appName = appName
+        self.frame = frame
+        self.scWindow = scWindow
+        self.scDisplay = scDisplay
+        self.thumbnail = thumbnail
+        self.unresolvedID = unresolvedID ?? "unresolved-\(kind)"
+    }
 }
 
 /// A current, full-window screenshot used only while choosing a crop. The image is

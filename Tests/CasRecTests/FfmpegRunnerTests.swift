@@ -80,6 +80,45 @@ struct FfmpegRunnerTests {
         #expect(stderr.utf8.count <= 96)
     }
 
+    @Test("stderr tail keeps diagnostics when its first UTF-8 sequence is truncated")
+    func reportsStderrAfterUTF8BoundaryTruncation() async {
+        let runner = FfmpegRunner(
+            executableURL: URL(filePath: "/bin/sh"),
+            policy: .init(timeout: .seconds(2), terminationGracePeriod: .milliseconds(100), stderrTailLimit: 14)
+        )
+
+        let error = await #expect(throws: PostProcessError.self) {
+            try await runner.run(arguments: ["-c", "printf 'prefix-あTAIL-MARKER\\n' >&2; exit 17"])
+        }
+        guard let error else { return }
+        guard case .ffmpegFailed(_, let stderr) = error else {
+            Issue.record("Expected an ffmpeg exit error, got \(error)")
+            return
+        }
+        #expect(stderr.contains("TAIL-MARKER"))
+    }
+
+    @Test("GIF pass-two timeout reports the total budget instead of remaining time")
+    func gifPassTwoTimeoutUsesTotalBudget() {
+        let error = GifConversionTimeout.remap(
+            .ffmpegTimedOut(timeout: .seconds(10), stderr: "PASS-2-MARKER"),
+            phase: "GIF パス 2",
+            totalTimeout: .seconds(60),
+            elapsed: .seconds(60)
+        )
+
+        guard case .ffmpegTimedOut(let timeout, _) = error else {
+            Issue.record("Expected an ffmpeg timeout error, got \(error)")
+            return
+        }
+        #expect(timeout == .seconds(60))
+        let description = error.errorDescription ?? ""
+        #expect(description.contains("GIF パス 2"))
+        #expect(description.contains("総予算 60.0 seconds"))
+        #expect(!description.contains("総予算 10.0 seconds"))
+        #expect(description.contains("PASS-2-MARKER"))
+    }
+
     @Test("timeout escalates past a process that ignores TERM")
     func timeoutKillsUncooperativeProcess() async {
         let runner = FfmpegRunner(

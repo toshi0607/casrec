@@ -22,7 +22,7 @@
 ## Verification Evidence
 
 - `git diff --check`: pass.
-- `make test`: 83 tests in 14 suites pass on latest `main`; the final suite passed three consecutive times after increasing the heavy-stderr test deadline from 2 to 10 seconds.
+- `make test`: 91 tests in 16 suites pass after the PR #34 review follow-up; the original 83-test suite also passed three consecutive times after increasing the heavy-stderr test deadline from 2 to 10 seconds.
 - `swift build -Xswiftc -warnings-as-errors`: pass with no warnings.
 - `make bundle CODESIGN_IDENTITY=-` and `make verify-bundle`: pass; `CodeDirectory flags=0x10002(adhoc,runtime)` and microphone entitlement remain embedded.
 - Capture mutation: replacing exact owner-bound resolution with kind/title matching makes 7 resolver assertions fail.
@@ -32,3 +32,11 @@
 - Queue shutdown uses a TERM-ignoring `/bin/sh` PID test and returns only after the child no longer exists.
 - UUID staging plus `renameatx_np(..., RENAME_EXCL)` tests preserve foreign destinations and publish successful output atomically.
 - Independent latest-main review found no production or test blocker. Its only low-severity test-stability concern was the heavy-stderr deadline; the adjusted test also passes alone in 0.52 seconds.
+
+## PR #34 Review Follow-up
+
+- Compression now uses the same private UUID staging and atomic no-overwrite publication boundary as GIF and recovery. Executor-level tests cover success, export failure, real task cancellation, and a final-path race.
+- Bounded stderr is decoded lossily at a split UTF-8 boundary so valid trailing diagnostics remain visible.
+- Two-pass GIF timeout diagnostics identify the pass, total budget, and elapsed time while preserving the failing pass's bounded stderr.
+- Identity-less capture-source defaults receive unique UUID-backed picker IDs; explicit provider IDs and owner-bound capture resolution remain unchanged.
+- Independent follow-up review found no production blocker. Its timeout-test gap was closed by exercising the remaining-time-to-total-budget remap itself rather than only the message constructor.

@@ -12,12 +12,12 @@ Draft pull request: https://github.com/toshi0607/casrec/pull/34
 2. Existing Hardened Runtime signing is now mechanically verified by `make verify-bundle` and CI in addition to the release leaf-hash gate.
 3. Library enumeration streams direct children, limits metadata work to four tasks, preserves complete sorting, and refuses GIF duration traversal above 10,000 frames.
 4. ffmpeg movie inputs are forced through the MOV demuxer with only the local `file` protocol; data references, absolute aliases, stdin, and unrestricted palette probing are disabled.
-5. ffmpeg keeps only a 16 KiB diagnostic suffix, uses a duration-aware 30-minute-to-12-hour deadline, propagates cancellation, and escalates TERM to KILL. Graceful app termination awaits the app-owned queue. Output is staged privately and published via atomic non-overwrite rename.
+5. ffmpeg keeps only a 16 KiB diagnostic suffix, uses a duration-aware 30-minute-to-12-hour deadline, propagates cancellation, and escalates TERM to KILL. Graceful app termination awaits the app-owned queue. Compression, GIF, and recovery output is staged privately and published via atomic non-overwrite rename.
 
 ## Verification
 
 - `git diff --check` — pass.
-- `make test` — 83 tests / 14 suites pass in three consecutive full-suite runs.
+- `make test` — 91 tests / 16 suites pass after review follow-up; the original 83-test / 14-suite baseline passed in three consecutive full-suite runs.
 - `swift build -Xswiftc -warnings-as-errors` — pass.
 - `make bundle CODESIGN_IDENTITY=-` and `make verify-bundle` — pass.
 - CodeDirectory — `flags=0x10002(adhoc,runtime)`; microphone entitlement remains embedded.
@@ -34,3 +34,5 @@ Draft pull request: https://github.com/toshi0607/casrec/pull/34
 ## Independent Review
 
 No production or test blocker remains. The reviewer confirmed that all five remediation boundaries and the latest UI, usage-notice, release-signing, and queue integrations remain intact. One low-severity test-stability concern was resolved by increasing the non-timeout heavy-stderr test deadline from 2 to 10 seconds; it passes alone in 0.52 seconds and in three consecutive full-suite runs.
+
+The PR #34 follow-up review found no production blocker. Its only acceptance-test gap was closed by testing the GIF pass-two remaining-time error remap directly; the final independent verification passes 91 tests in 16 suites and the warnings-as-errors build.

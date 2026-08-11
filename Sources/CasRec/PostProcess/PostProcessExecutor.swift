@@ -35,6 +35,19 @@ enum PostProcessError: LocalizedError, Sendable {
 /// Output paths are chosen before enqueueing, so a queued job can never clobber a file
 /// created by an earlier job.
 struct PostProcessExecutor: Sendable {
+    typealias CompressionExport = @Sendable (
+        URL,
+        URL,
+        CompressionPreset,
+        @escaping @Sendable (Double?) -> Void
+    ) async throws -> Void
+
+    private let compressor: Compressor
+
+    init(compressionExport: @escaping CompressionExport = Compressor.export) {
+        self.compressor = Compressor(export: compressionExport)
+    }
+
     static func defaultExecute(
         job: PostProcessJob,
         reportProgress: @escaping @Sendable (Double?) -> Void
@@ -48,7 +61,7 @@ struct PostProcessExecutor: Sendable {
     ) async throws -> URL {
         switch job.operation {
         case .compress(let preset):
-            return try await Compressor().compress(
+            return try await compressor.compress(
                 input: job.sourceURL,
                 output: job.outputURL,
                 preset: preset,
@@ -79,12 +92,35 @@ struct PostProcessExecutor: Sendable {
 /// AVFoundation-only movie compression.  HEVC is intentionally capped at 1080p for a
 /// materially smaller file, while H.264 uses the matching broadly-compatible preset.
 private struct Compressor: Sendable {
+    let export: PostProcessExecutor.CompressionExport
+
+    init(export: @escaping PostProcessExecutor.CompressionExport) {
+        self.export = export
+    }
+
     func compress(
         input: URL,
         output: URL,
         preset: CompressionPreset,
         reportProgress: @escaping @Sendable (Double?) -> Void
     ) async throws -> URL {
+        let temporaryOutput = PostProcessTemporaryOutput.makeURL(for: output)
+        defer {
+            PostProcessTemporaryOutput.removeIfPresent(temporaryOutput)
+        }
+        try await export(input, temporaryOutput, preset, reportProgress)
+        try Task.checkCancellation()
+        try PostProcessTemporaryOutput.moveWithoutOverwrite(temporaryOutput, to: output)
+        reportProgress(100)
+        return output
+    }
+
+    static func export(
+        input: URL,
+        output: URL,
+        preset: CompressionPreset,
+        reportProgress: @escaping @Sendable (Double?) -> Void
+    ) async throws {
         let exportPreset: String = switch preset {
         case .hevc: AVAssetExportPresetHEVC1920x1080
         case .h264: AVAssetExportPreset1920x1080
@@ -109,8 +145,8 @@ private struct Compressor: Sendable {
             } onCancel: {
                 sessionBox.session.cancelExport()
             }
-            reportProgress(100)
-            return output
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             throw PostProcessError.exportFailed(error.localizedDescription)
         }
@@ -151,19 +187,72 @@ private struct GifConverter: Sendable {
         let policy = FfmpegExecutionPolicy.forMediaDuration(await mediaDuration(of: input))
         let startedAt = ContinuousClock.now
         reportProgress(nil)
-        try await FfmpegRunner(executableURL: ffmpegURL, policy: policy).run(
-            arguments: FfmpegCommandBuilder.paletteGeneration(input: input, palette: palette)
-        )
+        do {
+            try await FfmpegRunner(executableURL: ffmpegURL, policy: policy).run(
+                arguments: FfmpegCommandBuilder.paletteGeneration(input: input, palette: palette)
+            )
+        } catch let error as PostProcessError {
+            throw GifConversionTimeout.remap(
+                error,
+                phase: "GIF パス 1",
+                totalTimeout: policy.timeout,
+                elapsed: startedAt.duration(to: .now)
+            )
+        }
         let elapsed = startedAt.duration(to: .now)
         guard let remainingPolicy = policy.withRemainingTimeout(after: elapsed) else {
-            throw PostProcessError.ffmpegTimedOut(timeout: policy.timeout, stderr: "")
+            throw GifConversionTimeout.error(
+                phase: "GIF パス 2 開始前",
+                totalTimeout: policy.timeout,
+                elapsed: elapsed,
+                stderr: ""
+            )
         }
-        try await FfmpegRunner(executableURL: ffmpegURL, policy: remainingPolicy).run(
-            arguments: FfmpegCommandBuilder.paletteUse(input: input, palette: palette, output: temporaryOutput)
-        )
+        do {
+            try await FfmpegRunner(executableURL: ffmpegURL, policy: remainingPolicy).run(
+                arguments: FfmpegCommandBuilder.paletteUse(input: input, palette: palette, output: temporaryOutput)
+            )
+        } catch let error as PostProcessError {
+            throw GifConversionTimeout.remap(
+                error,
+                phase: "GIF パス 2",
+                totalTimeout: policy.timeout,
+                elapsed: startedAt.duration(to: .now)
+            )
+        }
         try PostProcessTemporaryOutput.moveWithoutOverwrite(temporaryOutput, to: output)
         reportProgress(100)
         return output
+    }
+}
+
+/// Gives two-pass GIF failures a phase and total-budget diagnostic while preserving the
+/// bounded stderr tail returned by `FfmpegRunner`.
+enum GifConversionTimeout {
+    static func remap(
+        _ error: PostProcessError,
+        phase: String,
+        totalTimeout: Duration,
+        elapsed: Duration
+    ) -> PostProcessError {
+        guard case .ffmpegTimedOut(_, let stderr) = error else { return error }
+        return self.error(
+            phase: phase,
+            totalTimeout: totalTimeout,
+            elapsed: elapsed,
+            stderr: stderr
+        )
+    }
+
+    static func error(
+        phase: String,
+        totalTimeout: Duration,
+        elapsed: Duration,
+        stderr: String
+    ) -> PostProcessError {
+        let context = "\(phase) が総予算 \(totalTimeout) のうち \(elapsed) 経過時点でタイムアウトしました。"
+        let diagnostic = stderr.isEmpty ? context : "\(context) \(stderr)"
+        return .ffmpegTimedOut(timeout: totalTimeout, stderr: diagnostic)
     }
 }
 
@@ -457,7 +546,7 @@ private final class FfmpegProcessController: @unchecked Sendable {
 
         let result = state.withLock { current -> Result<Void, Error>? in
             guard !current.finished, current.process === process else { return nil }
-            let stderr = Self.summary(of: String(data: current.stderrTail, encoding: .utf8) ?? "")
+            let stderr = Self.summary(of: String(decoding: current.stderrTail, as: UTF8.self))
             let result: Result<Void, Error>
             switch current.stopReason {
             case .cancelled:

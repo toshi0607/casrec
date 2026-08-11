@@ -1,5 +1,6 @@
 # Lessons
 
+- 2026-08-11: **同じセキュリティ不変条件を持つ複数バックエンドは、全実装を列挙して同じ公開境界を通ることをテストする。** ffmpeg経路だけをステージング+非上書き公開にしても、AVAssetExportSession経路が最終パスへ直接書けば不変条件は成立しない。新しい不変条件を導入するときは、protocol/enumの全caseと同等sinkを監査し、成功・失敗・キャンセル・競合をexecutor境界で検証する。
 - 2026-08-06: **Codex(`codex exec --sandbox workspace-write`)は、スコープ外の *追跡ファイル* の未コミット変更を HEAD 状態へ戻すことがある。** C1 委譲中に `tasks/todo.md` への未コミット追記が消えた(未追跡ファイルは無事)。委譲前に自分の編集をコミットするか、委譲中は追跡ファイルを触らない。CLAUDE.md の「Verify after quiescence」は git status だけでなく **自分が直前に編集したファイルの中身**まで確認すること。
 - 2026-08-06: **Codex への委譲は既定で `gpt-5.6-terra` + `model_reasoning_effort=high` を使う。** ユーザーの `~/.codex/config.toml` が既にこの組み合わせを既定にしている。`codex-luna` エージェント定義は `-m gpt-5.6-luna -c model_reasoning_effort=max` を明示的に渡すためこの既定を上書きしてしまう。Terra high を使うときは `codex exec` を直接呼ぶ(モデル指定を省くか `-m gpt-5.6-terra -c model_reasoning_effort=high` を明示)。
 - 2026-08-05: **利用案内の確認操作は、法的性質をUI・実装コメント・保存状態で同じ言葉に揃える。** 契約同意を求めない案内なら、その旨をUIに明記し、文言の意味が変わったときは確認済みバージョンを上げて再表示する。

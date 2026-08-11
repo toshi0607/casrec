@@ -144,7 +144,7 @@ struct CaptureSource: Identifiable, @unchecked Sendable {
         self.scWindow = scWindow
         self.scDisplay = scDisplay
         self.thumbnail = thumbnail
-        self.unresolvedID = unresolvedID ?? "unresolved-\(kind)"
+        self.unresolvedID = unresolvedID ?? "unresolved-\(kind)-\(UUID().uuidString)"
     }
 }
 

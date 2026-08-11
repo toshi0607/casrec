@@ -416,3 +416,17 @@ Phase A の説明で「cask なら `brew install --cask --no-quarantine` で Gat
 - [x] コミット・pushし、ドラフトPR #34を作成する。
 
 詳細: [security-fixes/task_plan.md](security-fixes/task_plan.md)
+
+## PR #34 レビュー指摘対応（2026-08-11）
+
+- [x] 指摘1〜4を現行コードと既存不変条件に照らして再検証する。
+- [x] 妥当な指摘へ、脆弱な挙動を再現する回帰テストと最小修正を追加する。
+- [x] focused test、`make test`、warnings-as-errors buildを通す（91 tests / 16 suites）。
+- [x] 独立レビューで不変条件・回帰・差分範囲を確認する。
+- [ ] 判断と検証証跡を記録し、PR #34へpushする。
+
+### Decision log
+
+- PR上のreview threadは0件。今回の対応単位は、ユーザーが提示した4件のレビュー票とする。
+- 4件とも妥当。圧縮は共通の一時出力公開境界へ揃え、stderr/GIF timeoutは診断保持、未解決source IDはUI識別子だけを一意化する。owner-bound identityは変更しない。
+- 独立レビューのproduction blockerは0件。GIF timeoutテストがmessage constructorしか通らない指摘は妥当だったため、pass2残時間から総予算へのremap経路を直接検証する形へ修正した。

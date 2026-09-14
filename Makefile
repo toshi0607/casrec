@@ -21,6 +21,11 @@ endif
 # screen-recording TCC grant on each rebuild (DESIGN.md §8). "CasRec Release" is a
 # local self-signed code-signing certificate; a certificate-backed signature
 # keeps the designated requirement stable so the grant survives rebuilds.
+# Ad-hoc signing is refused unless ALLOW_ADHOC=1 is passed explicitly. An ad-hoc bundle
+# left in a checkout silently loses the screen-recording grant the next time it is
+# launched (2026-09-14: agents verifying the README fallback left one in the main
+# checkout). CI and first-time contributors without a certificate opt in explicitly.
+ALLOW_ADHOC ?= 0
 CODESIGN_IDENTITY ?= CasRec Release
 ENTITLEMENTS := Resources/CasRec.entitlements
 
@@ -44,6 +49,11 @@ test:
 # them into the signature: `--verify --deep --strict` passes and the leftovers
 # ship in the release ZIP undetected.
 bundle:
+	@if [ "$(CODESIGN_IDENTITY)" = "-" ] && [ "$(ALLOW_ADHOC)" != "1" ]; then \
+		echo "ERROR: CODESIGN_IDENTITY=- produces an ad-hoc bundle whose screen-recording grant does not survive a rebuild."; \
+		echo "       Use the default identity, or pass ALLOW_ADHOC=1 to build an ad-hoc bundle on purpose."; \
+		exit 1; \
+	fi
 	swift build -c release
 	rm -rf "$(APP_BUNDLE)"
 	mkdir -p "$(MACOS_DIR)" "$(RESOURCES_DIR)"

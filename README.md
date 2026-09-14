@@ -85,13 +85,15 @@ the maintainer's local self-signed certificate and will not exist on another
 Mac. Without a certificate, use ad-hoc signing:
 
 ```sh
-make bundle CODESIGN_IDENTITY=-
-make run CODESIGN_IDENTITY=-
+make bundle CODESIGN_IDENTITY=- ALLOW_ADHOC=1
+make run CODESIGN_IDENTITY=- ALLOW_ADHOC=1
 ```
 
 You can set `CODESIGN_IDENTITY` to your own signing identity for repeated local
-development. Ad-hoc signatures change when the app is rebuilt, so macOS may ask
-for Screen Recording permission again after a rebuild.
+development. Ad-hoc signatures change when the app is rebuilt, so macOS asks for
+Screen Recording permission again after every rebuild and ignores the toggle that is
+already on. `make bundle` therefore refuses `CODESIGN_IDENTITY=-` unless you also
+pass `ALLOW_ADHOC=1`.
 
 ## Privacy
 
@@ -208,11 +210,11 @@ make run
 `make bundle` は `CasRec.app` を作成して署名します。`make run` はバンドル作成後にアプリを開きます。既定の署名IDである `CasRec Release` はメンテナのローカル自己署名証明書であり、他のMacには存在しません。証明書がない場合は、ad-hoc署名で実行できます。
 
 ```sh
-make bundle CODESIGN_IDENTITY=-
-make run CODESIGN_IDENTITY=-
+make bundle CODESIGN_IDENTITY=- ALLOW_ADHOC=1
+make run CODESIGN_IDENTITY=- ALLOW_ADHOC=1
 ```
 
-繰り返しローカル開発する場合は、`CODESIGN_IDENTITY` に自身の署名IDを指定できます。ad-hoc署名では再ビルドのたびに署名が変わるため、macOSが画面収録の許可を再度求めることがあります。
+繰り返しローカル開発する場合は、`CODESIGN_IDENTITY` に自身の署名IDを指定できます。ad-hoc署名では再ビルドのたびに署名が変わるため、macOSは再ビルド後に画面収録の許可を再度求め、すでにONになっているトグルは効きません。そのため `make bundle` は `ALLOW_ADHOC=1` を併せて指定しない限り `CODESIGN_IDENTITY=-` を拒否します。
 
 ### プライバシー
 

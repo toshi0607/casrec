@@ -289,7 +289,7 @@ struct MainView: View {
                         NSWorkspace.shared.open(url)
                     }
                 }
-                Text("許可した後は、CasRec を再起動すると録画できるようになります。")
+                Text("許可した後、録画対象が表示されない場合は CasRec を再起動してください。")
                     .metaStyle()
             }
         case .failed(let message):
